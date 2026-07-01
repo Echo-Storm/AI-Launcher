@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
         self.kobold_card = ServiceCard(
             "KoboldCpp  ·  Model Backend",
             has_chargen_btn=True,
+            model_items=[(m["name"], m.get("key", "")) for m in MODELS],
         )
         self.st_card = ServiceCard("SillyTavern  ·  Writing Interface", has_open_btn=True)
 
@@ -348,7 +349,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _start_kobold_writing(self):
-        self._start_kobold("cydonia")
+        combo = self.kobold_card.model_combo
+        key = combo.currentData() if combo else "cydonia"
+        self._start_kobold(key or "cydonia")
 
     def _start_kobold(self, model_key: str):
         if self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning:
@@ -381,6 +384,8 @@ class MainWindow(QMainWindow):
         self.kobold_card.btn_stop.setEnabled(True)
         self.kobold_card.btn_chargen.setEnabled(False)
         self.kobold_card.btn_chargen.setToolTip("")
+        if self.kobold_card.model_combo:
+            self.kobold_card.model_combo.setEnabled(False)
         self._log_kobold(f"Starting with model: {model_name}")
 
         proc = QProcess(self)
@@ -452,6 +457,8 @@ class MainWindow(QMainWindow):
         self.kobold_card.btn_stop.setEnabled(False)
         self.kobold_card.btn_chargen.setEnabled(True)
         self.kobold_card.btn_chargen.setToolTip("")
+        if self.kobold_card.model_combo:
+            self.kobold_card.model_combo.setEnabled(True)
         self._log_kobold(f"Exited (code {exit_code})")
         self._kobold_proc = None
 
@@ -544,7 +551,9 @@ class MainWindow(QMainWindow):
             self._start_st()
         else:
             self._st_pending_autostart = True
-            self._start_kobold("cydonia")
+            combo = self.kobold_card.model_combo
+            key = combo.currentData() if combo else "cydonia"
+            self._start_kobold(key or "cydonia")
 
     def _stop_all(self):
         self._stop_kobold()
