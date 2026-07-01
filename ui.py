@@ -72,6 +72,13 @@ class ServiceCard(QFrame):
         title_lbl.setStyleSheet(f"color: {COLOR_ACCENT};")
         outer.addWidget(title_lbl)
 
+        # Subtitle — shows loaded model name (hidden when no model loaded)
+        self.lbl_subtitle = QLabel("")
+        self.lbl_subtitle.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE - 1))
+        self.lbl_subtitle.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        self.lbl_subtitle.setVisible(False)
+        outer.addWidget(self.lbl_subtitle)
+
         # Status badge
         self.status = StatusBadge()
         outer.addWidget(self.status)
@@ -180,8 +187,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(560, 480)
-        self.resize(620, 560)
+        self.setMinimumSize(580, 500)
+        self.resize(660, 580)
         self.setStyleSheet(STYLESHEET)
 
         self._kobold_proc           = None
@@ -228,6 +235,12 @@ class MainWindow(QMainWindow):
         hdr_layout.addWidget(hdr_ver)
         header_row.setFixedHeight(40)
         vbox.addWidget(header_row)
+
+        # Accent divider under header
+        _div = QFrame()
+        _div.setFixedHeight(2)
+        _div.setStyleSheet(f"background: {COLOR_ACCENT_DIM}; border: none;")
+        vbox.addWidget(_div)
 
         # Main content area
         content = QWidget()
@@ -362,6 +375,8 @@ class MainWindow(QMainWindow):
         self._current_model_key = model_key
         self._kobold_ready = False
         self.kobold_card.status.set_starting()
+        self.kobold_card.lbl_subtitle.setText(f"Loading  {model_name}…")
+        self.kobold_card.lbl_subtitle.setVisible(True)
         self.kobold_card.btn_start.setEnabled(False)
         self.kobold_card.btn_stop.setEnabled(True)
         self.kobold_card.btn_chargen.setEnabled(False)
@@ -405,14 +420,14 @@ class MainWindow(QMainWindow):
         if any(s in lower for s in KOBOLD_READY_STRINGS):
             self._kobold_ready = True
             self.kobold_card.status.set_running()
-            self._log_kobold("Ready.")
 
-            if self._current_model_key == "chargen":
-                self.kobold_card.btn_chargen.setEnabled(True)
-                self.kobold_card.btn_chargen.setToolTip("")
-            else:
-                self.kobold_card.btn_chargen.setEnabled(False)
-                self.kobold_card.btn_chargen.setToolTip("Stop KoboldCpp first")
+            model = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
+            model_name = model["name"] if model else (self._current_model_key or "Unknown")
+            self.kobold_card.lbl_subtitle.setText(model_name)
+            self._log_kobold(f"Ready  —  {model_name}")
+
+            self.kobold_card.btn_chargen.setEnabled(True)
+            self.kobold_card.btn_chargen.setToolTip("")
 
             if self._pending_chargen_open:
                 self._pending_chargen_open = False
@@ -432,6 +447,7 @@ class MainWindow(QMainWindow):
         else:
             self.kobold_card.status.set_error()
         self._kobold_stopping = False
+        self.kobold_card.lbl_subtitle.setVisible(False)
         self.kobold_card.btn_start.setEnabled(True)
         self.kobold_card.btn_stop.setEnabled(False)
         self.kobold_card.btn_chargen.setEnabled(True)
@@ -538,7 +554,7 @@ class MainWindow(QMainWindow):
         webbrowser.open(SILLYTAVERN_URL)
 
     def _click_chargen(self):
-        if self._kobold_ready and self._current_model_key == "chargen":
+        if self._kobold_ready:
             self._open_chargen()
         elif not (self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning):
             self._pending_chargen_open = True
@@ -548,6 +564,7 @@ class MainWindow(QMainWindow):
         from chargen_dialog import CharGenDialog
         if self._chargen_dlg is None:
             self._chargen_dlg = CharGenDialog(KOBOLD_API_BASE, CHARGEN_OUTPUT_DIR, self)
+        self._chargen_dlg.set_model_hint(self._current_model_key)
         self._chargen_dlg.show()
         self._chargen_dlg.raise_()
         self._chargen_dlg.activateWindow()

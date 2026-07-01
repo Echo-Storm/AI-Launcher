@@ -8,9 +8,10 @@ import re
 from PyQt6.QtCore    import Qt, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QPixmap
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox, QDialog, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QTabWidget, QWidget, QFileDialog, QMessageBox,
+    QFrame, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+    QSlider, QTabWidget, QWidget, QFileDialog, QMessageBox,
     QScrollArea,
 )
 
@@ -23,26 +24,40 @@ from constants import (
 )
 
 # ---------------------------------------------------------------------------
-# Prompt templates
+# Prompt templates — 4 composable variants
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = (
+_BASE = (
     "You are CharGen, an expert SillyTavern character card creator. "
     "Generate a complete, detailed character card as a single valid JSON object "
-    "with these exact fields: name, description, personality, scenario, first_mes. "
-    "The first_mes field should be the character's opening message (1-2 paragraphs). "
-    "Output only the JSON object — no markdown fences, no commentary."
 )
 
-_SYSTEM_PROMPT_WITH_EXAMPLES = (
-    "You are CharGen, an expert SillyTavern character card creator. "
-    "Generate a complete, detailed character card as a single valid JSON object "
+_FIELDS = (
+    "with these exact fields: name, description, personality, scenario, first_mes. "
+    "The first_mes field should be the character's opening message (1-2 paragraphs). "
+)
+
+_FIELDS_EX = (
     "with these exact fields: name, description, personality, scenario, first_mes, mes_example. "
     "The first_mes field should be the character's opening message (1-2 paragraphs). "
     r"The mes_example field must contain exactly ONE example exchange using "
     r"<START>\n{{user}}: ...\n{{char}}: ... format — keep each side to 2-3 sentences. "
-    "Output only the JSON object — no markdown fences, no commentary."
 )
+
+_DISTINCTIVE = (
+    "Prioritize genuine originality: avoid overused archetypes and clichés. "
+    "Give the character internal contradictions, specific idiosyncrasies, a distinct speech "
+    "register, and at least one surprising detail that makes them feel unmistakably real. "
+)
+
+_OUTPUT = (
+    "Output ONLY the raw JSON object — no markdown fences, no commentary, no preamble."
+)
+
+_SYS_NORMAL    = _BASE + _FIELDS    +               _OUTPUT
+_SYS_NORMAL_EX = _BASE + _FIELDS_EX +               _OUTPUT
+_SYS_DIST      = _BASE + _FIELDS    + _DISTINCTIVE + _OUTPUT
+_SYS_DIST_EX   = _BASE + _FIELDS_EX + _DISTINCTIVE + _OUTPUT
 
 
 def _build_user_prompt(fields: dict) -> str:
@@ -84,7 +99,6 @@ def _extract_json(text: str) -> dict | None:
 
 
 def _to_st_card(data: dict, fallback_name: str = "") -> dict:
-    """Flat v1 card — used for JSON export."""
     return {
         "name":                      data.get("name") or fallback_name or "Unknown",
         "description":               data.get("description") or data.get("concept", ""),
@@ -104,7 +118,6 @@ def _to_st_card(data: dict, fallback_name: str = "") -> dict:
 
 
 def _to_st_card_v2(data: dict, fallback_name: str = "") -> dict:
-    """Spec v2 card — used for PNG export (the ST-native format)."""
     v1 = _to_st_card(data, fallback_name)
     data_fields = {k: v for k, v in v1.items() if k not in ("avatar", "chat")}
     data_fields["extensions"] = {}
@@ -116,16 +129,14 @@ def _to_st_card_v2(data: dict, fallback_name: str = "") -> dict:
 
 
 def _make_png_with_chara(card_v2: dict, portrait_path: str | None, output_path: str):
-    """Save card_v2 embedded in a PNG tEXt 'chara' chunk."""
     from PIL import Image, PngImagePlugin
 
     if portrait_path and os.path.isfile(portrait_path):
         img = Image.open(portrait_path).convert("RGBA")
-        # Cap at 1024×1024 so the file stays manageable
         if img.width > 1024 or img.height > 1024:
             img.thumbnail((1024, 1024), Image.LANCZOS)
     else:
-        img = Image.new("RGBA", (512, 512), (26, 17, 40, 255))  # app header colour
+        img = Image.new("RGBA", (512, 512), (26, 17, 40, 255))
 
     chara_b64 = base64.b64encode(
         json.dumps(card_v2, ensure_ascii=False).encode("utf-8")
@@ -144,10 +155,11 @@ class _GenerateWorker(QThread):
     finished = pyqtSignal(str)
     error    = pyqtSignal(str)
 
-    def __init__(self, api_base: str, messages: list, parent=None):
+    def __init__(self, api_base: str, messages: list, temperature: float, parent=None):
         super().__init__(parent)
-        self._api_base = api_base
-        self._messages = messages
+        self._api_base    = api_base
+        self._messages    = messages
+        self._temperature = temperature
 
     def run(self):
         import urllib.request
@@ -156,8 +168,7 @@ class _GenerateWorker(QThread):
         payload = json.dumps({
             "messages":    self._messages,
             "max_tokens":  6144,
-            "temperature": 0.75,
-            "top_p":       0.92,
+            "temperature": self._temperature,
             "stream":      False,
         }).encode()
 
@@ -252,6 +263,28 @@ QScrollArea, QScrollArea > QWidget > QWidget {{
     background: {COLOR_BG};
     border: none;
 }}
+QSlider::groove:horizontal {{
+    height: 4px;
+    background: {COLOR_BORDER_BRIGHT};
+    border-radius: 2px;
+    margin: 0px;
+}}
+QSlider::handle:horizontal {{
+    background: {COLOR_ACCENT};
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+    border: none;
+}}
+QSlider::sub-page:horizontal {{
+    background: {COLOR_ACCENT_DIM};
+    border-radius: 2px;
+}}
+QSlider::handle:horizontal:hover {{
+    background: {COLOR_ACCENT};
+    border: 2px solid {COLOR_TEXT};
+}}
 """
 
 _PORTRAIT_PLACEHOLDER_STYLE = (
@@ -272,6 +305,15 @@ def _lbl(text: str) -> QLabel:
     return l
 
 
+def _lbl_section(text: str) -> QLabel:
+    l = QLabel(text)
+    l.setStyleSheet(
+        f"color: {COLOR_ACCENT}; font-size: 8pt; font-weight: bold;"
+        f" padding-top: 4px;"
+    )
+    return l
+
+
 def _multi(placeholder: str, lines: int) -> QPlainTextEdit:
     w = QPlainTextEdit()
     w.setPlaceholderText(placeholder)
@@ -287,8 +329,8 @@ class CharGenDialog(QDialog):
     def __init__(self, api_base: str, output_dir: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Character Card Generator")
-        self.setMinimumSize(660, 600)
-        self.resize(720, 660)
+        self.setMinimumSize(680, 620)
+        self.resize(740, 680)
         self.setStyleSheet(_STYLE)
 
         self._api_base      = api_base
@@ -324,13 +366,68 @@ class CharGenDialog(QDialog):
             form_vbox.addWidget(widget)
             form_vbox.addSpacing(6)
 
+        # --- Generation settings ---
+        form_vbox.addWidget(_lbl_section("Generation Settings"))
+        form_vbox.addSpacing(4)
+
+        # Temperature slider
+        temp_row = QHBoxLayout()
+        temp_row.setSpacing(6)
+        temp_row.addWidget(_lbl("Creativity"))
+        temp_row.addSpacing(4)
+        lbl_safe = QLabel("Safe")
+        lbl_safe.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 7pt;")
+        temp_row.addWidget(lbl_safe)
+        self._slider_temp = QSlider(Qt.Orientation.Horizontal)
+        self._slider_temp.setRange(60, 120)
+        self._slider_temp.setValue(85)
+        self._slider_temp.setTickInterval(10)
+        self._slider_temp.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._slider_temp.setFixedHeight(28)
+        self._slider_temp.valueChanged.connect(self._on_temp_changed)
+        temp_row.addWidget(self._slider_temp, 1)
+        lbl_creative = QLabel("Creative")
+        lbl_creative.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 7pt;")
+        temp_row.addWidget(lbl_creative)
+        temp_row.addSpacing(6)
+        self._lbl_temp_val = QLabel("0.85")
+        self._lbl_temp_val.setFixedWidth(34)
+        self._lbl_temp_val.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._lbl_temp_val.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-size: 8pt; font-weight: bold;"
+        )
+        temp_row.addWidget(self._lbl_temp_val)
+        form_vbox.addLayout(temp_row)
+        form_vbox.addSpacing(6)
+
+        # Distinctive toggle
+        self.chk_distinctive = QCheckBox("Distinctive character  (stronger creative direction)")
+        self.chk_distinctive.setChecked(False)
+        self.chk_distinctive.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        form_vbox.addWidget(self.chk_distinctive)
+
+        # Separator
+        form_vbox.addSpacing(10)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {COLOR_BORDER_BRIGHT}; border: none;")
+        form_vbox.addWidget(sep)
+        form_vbox.addSpacing(8)
+
+        # --- Character fields ---
+        form_vbox.addWidget(_lbl_section("Character Details"))
+        form_vbox.addSpacing(4)
+
         self.edit_name = QLineEdit()
         self.edit_name.setPlaceholderText("Optional — model will invent one if blank")
         _field("Name", self.edit_name)
 
         self.edit_concept = _multi(
             "Required. Describe the character — who they are, their role, setting, tone, "
-            "any key details. The more you write here, the better the output.",
+            "any key details. The more specific the better.",
             4,
         )
         _field("Concept / Description  *", self.edit_concept)
@@ -339,6 +436,7 @@ class CharGenDialog(QDialog):
             "Personality traits, speech patterns, quirks, motivations (optional)", 3)
         _field("Personality", self.edit_personality)
 
+        # Optional toggles
         def _optional_field(attr, placeholder, lines, label):
             chk = QCheckBox(f"{label}  (uncheck to skip)")
             chk.setChecked(False)
@@ -414,7 +512,7 @@ class CharGenDialog(QDialog):
         portrait_btns.addWidget(self._btn_pick_portrait)
         portrait_btns.addWidget(self._btn_clear_portrait)
         portrait_lbl = _lbl(
-            "Optional — if none is selected, a dark placeholder\n"
+            "Optional — if none selected, a dark placeholder\n"
             "will be used when saving as PNG."
         )
         portrait_lbl.setWordWrap(True)
@@ -451,6 +549,12 @@ class CharGenDialog(QDialog):
         self.btn_generate.clicked.connect(self._generate)
         ctrl.addWidget(self.btn_generate)
 
+        self.btn_copy = QPushButton("Copy")
+        self.btn_copy.setFixedHeight(28)
+        self.btn_copy.setEnabled(False)
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        ctrl.addWidget(self.btn_copy)
+
         self.btn_save_json = QPushButton("Save JSON")
         self.btn_save_json.setFixedHeight(28)
         self.btn_save_json.setEnabled(False)
@@ -467,6 +571,20 @@ class CharGenDialog(QDialog):
         root.addLayout(ctrl)
 
     # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def set_model_hint(self, model_key: str | None):
+        """Called by MainWindow each time the dialog is shown."""
+        if model_key and model_key != "chargen":
+            self._set_status(
+                "Note: general model loaded — CharGen model gives better card results.",
+                COLOR_STATUS_STARTING,
+            )
+        elif self._last_card is None:
+            self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -475,16 +593,18 @@ class CharGenDialog(QDialog):
         event.accept()
 
     def _cleanup_worker(self):
-        if self._worker and self._worker.isRunning():
+        if self._worker is None:
+            return
+        if self._worker.isRunning():
             try:
                 self._worker.finished.disconnect()
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
             self._worker.setParent(None)
-            self._worker = None
-            self.btn_generate.setEnabled(True)
             self._set_status("Generation cancelled.", COLOR_TEXT_MUTED)
+            self.btn_generate.setEnabled(True)
+        self._worker = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -503,6 +623,9 @@ class CharGenDialog(QDialog):
         if d:
             self._output_dir = d
             self._lbl_outdir.setText(d)
+
+    def _on_temp_changed(self, v: int):
+        self._lbl_temp_val.setText(f"{v / 100:.2f}")
 
     # ------------------------------------------------------------------
     # Portrait
@@ -546,7 +669,18 @@ class CharGenDialog(QDialog):
             self.edit_concept.setFocus()
             return
 
-        use_examples = self.chk_mes_example.isChecked()
+        use_examples    = self.chk_mes_example.isChecked()
+        use_distinctive = self.chk_distinctive.isChecked()
+
+        if use_distinctive and use_examples:
+            system = _SYS_DIST_EX
+        elif use_distinctive:
+            system = _SYS_DIST
+        elif use_examples:
+            system = _SYS_NORMAL_EX
+        else:
+            system = _SYS_NORMAL
+
         fields = {
             "name":        self.edit_name.text().strip(),
             "concept":     concept,
@@ -556,23 +690,26 @@ class CharGenDialog(QDialog):
             "mes_example": self.edit_mes_example.toPlainText().strip() if use_examples else "",
         }
 
-        system = _SYSTEM_PROMPT_WITH_EXAMPLES if use_examples else _SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system},
             {"role": "user",   "content": _build_user_prompt(fields)},
         ]
 
+        temperature = self._slider_temp.value() / 100.0
+
         self.btn_generate.setEnabled(False)
+        self.btn_copy.setEnabled(False)
         self.btn_save_json.setEnabled(False)
         self.btn_save_png.setEnabled(False)
         self._set_status("Generating… this may take a minute.", COLOR_STATUS_STARTING)
 
-        self._worker = _GenerateWorker(self._api_base, messages, self)
+        self._worker = _GenerateWorker(self._api_base, messages, temperature, self)
         self._worker.finished.connect(self._on_done)
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
     def _on_done(self, raw: str):
+        self._worker = None
         self._last_card = _extract_json(raw)
 
         if self._last_card:
@@ -591,12 +728,24 @@ class CharGenDialog(QDialog):
                 COLOR_STATUS_ERROR,
             )
 
+        self.btn_copy.setEnabled(True)   # always allow copying the raw output
         self._tabs.setCurrentIndex(1)
         self.btn_generate.setEnabled(True)
 
     def _on_error(self, msg: str):
+        self._worker = None
         self._set_status(f"Error: {msg}", COLOR_STATUS_ERROR)
         self.btn_generate.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Clipboard
+    # ------------------------------------------------------------------
+
+    def _copy_to_clipboard(self):
+        text = self.edit_output.toPlainText()
+        if text:
+            QApplication.clipboard().setText(text)
+            self._set_status("Copied to clipboard.", COLOR_STATUS_RUNNING)
 
     # ------------------------------------------------------------------
     # Save — JSON
