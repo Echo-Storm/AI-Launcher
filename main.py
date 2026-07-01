@@ -34,23 +34,60 @@ def _setup_logging() -> logging.Logger:
 
 def _install_excepthook(logger: logging.Logger):
     def _hook(exc_type, exc_value, exc_tb):
-        if issubclass(exc_type, KeyboardInterrupt):
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
     sys.excepthook = _hook
 
 
+def _check_config() -> bool:
+    """Return True if config.json is present. Show a dialog and return False if not."""
+    here        = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(here, "config.json")
+    example_path = os.path.join(here, "config.example.json")
+
+    if os.path.isfile(config_path):
+        return True
+
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    msg = QMessageBox()
+    msg.setWindowTitle("AI Writing Tools — Setup Required")
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setText("config.json not found.")
+    msg.setInformativeText(
+        "Copy config.example.json to config.json and fill in your paths, "
+        "then launch the app again.\n\n"
+        f"Example:  {example_path}\n"
+        f"Create:   {config_path}"
+    )
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    msg.exec()
+    return False
+
+
 def main():
     logger = _setup_logging()
     _install_excepthook(logger)
 
-    from constants import APP_NAME, APP_VERSION
+    if not _check_config():
+        sys.exit(0)
+
+    try:
+        from constants import APP_NAME, APP_VERSION
+    except SystemExit as e:
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.critical(None, "Configuration Error", str(e))
+        logger.error(f"Config error: {e}")
+        sys.exit(1)
+
     logger.info(f"{APP_NAME} v{APP_VERSION} starting")
 
     from PyQt6.QtWidgets import QApplication
-
-    app = QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
 
