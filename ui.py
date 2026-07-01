@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame,
-    QSplitter,
+    QSplitter, QComboBox,
 )
 
 from constants import *
@@ -58,7 +58,9 @@ class StatusBadge(QWidget):
 
 class ServiceCard(QFrame):
     def __init__(self, title: str, has_open_btn: bool = False,
-                 has_chargen_btn: bool = False, parent=None):
+                 has_chargen_btn: bool = False,
+                 model_items: list[tuple[str, str]] | None = None,
+                 parent=None):
         super().__init__(parent)
         self.setObjectName("ServiceCard")
 
@@ -82,6 +84,16 @@ class ServiceCard(QFrame):
         # Status badge
         self.status = StatusBadge()
         outer.addWidget(self.status)
+
+        # Model selector (optional)
+        if model_items:
+            self.model_combo = QComboBox()
+            self.model_combo.setFixedHeight(26)
+            for name, key in model_items:
+                self.model_combo.addItem(name, userData=key)
+            outer.addWidget(self.model_combo)
+        else:
+            self.model_combo = None
 
         # Buttons
         btn_row = QHBoxLayout()
@@ -179,6 +191,32 @@ QLabel#version {{
 }}
 QSplitter::handle {{
     background: {COLOR_BORDER};
+}}
+QComboBox {{
+    background: {COLOR_PANEL};
+    color: {COLOR_TEXT};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    border-radius: 4px;
+    padding: 2px 8px;
+    selection-background-color: {COLOR_ACCENT_DIM};
+}}
+QComboBox:hover {{
+    border-color: {COLOR_ACCENT_DIM};
+}}
+QComboBox:disabled {{
+    color: {COLOR_TEXT_MUTED};
+    border-color: {COLOR_BORDER};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 18px;
+}}
+QComboBox QAbstractItemView {{
+    background: {COLOR_PANEL};
+    color: {COLOR_TEXT};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    selection-background-color: {COLOR_ACCENT_DIM};
+    outline: none;
 }}
 """
 

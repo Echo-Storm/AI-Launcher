@@ -4,7 +4,7 @@ import json
 import os
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.1.0"
+APP_VERSION  = "1.2.0"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------
@@ -88,9 +88,9 @@ CHARGEN_OUTPUT_DIR = _cg.get(
 COLOR_BG            = "#181818"
 COLOR_PANEL         = "#1f1f1f"
 COLOR_PANEL_ALT     = "#232323"
-COLOR_HEADER_BAR    = "#1a1128"
-COLOR_ACCENT        = "#8b5cf6"
-COLOR_ACCENT_DIM    = "#5b3fa0"
+COLOR_HEADER_BAR    = "#2d1f00"
+COLOR_ACCENT        = "#7cb342"
+COLOR_ACCENT_DIM    = "#4a6b28"
 COLOR_TEXT          = "#e8e8e8"
 COLOR_TEXT_MUTED    = "#666666"
 COLOR_BUTTON_BG     = "#282828"

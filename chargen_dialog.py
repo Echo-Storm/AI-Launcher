@@ -194,6 +194,29 @@ class _GenerateWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Prefs persistence  (temperature + distinctive defaults)
+# ---------------------------------------------------------------------------
+
+_PREFS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chargen_prefs.json")
+
+
+def _load_prefs() -> dict:
+    try:
+        with open(_PREFS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_prefs(prefs: dict) -> None:
+    try:
+        with open(_PREFS_PATH, "w", encoding="utf-8") as f:
+            json.dump(prefs, f, indent=2)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Stylesheet
 # ---------------------------------------------------------------------------
 
@@ -402,11 +425,31 @@ class CharGenDialog(QDialog):
         form_vbox.addLayout(temp_row)
         form_vbox.addSpacing(6)
 
-        # Distinctive toggle
+        # Distinctive toggle + Set as default
+        dist_row = QHBoxLayout()
+        dist_row.setSpacing(8)
         self.chk_distinctive = QCheckBox("Distinctive character  (stronger creative direction)")
         self.chk_distinctive.setChecked(False)
         self.chk_distinctive.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
-        form_vbox.addWidget(self.chk_distinctive)
+        dist_row.addWidget(self.chk_distinctive, 1)
+        self._btn_set_default = QPushButton("Set as default")
+        self._btn_set_default.setFixedHeight(20)
+        self._btn_set_default.setFixedWidth(100)
+        self._btn_set_default.setStyleSheet(
+            f"font-size: 7pt; color: {COLOR_TEXT_MUTED};"
+            f" background: transparent; border: 1px solid {COLOR_BORDER_BRIGHT};"
+            f" border-radius: 3px; padding: 1px 6px;"
+        )
+        self._btn_set_default.clicked.connect(self._save_defaults)
+        dist_row.addWidget(self._btn_set_default)
+        form_vbox.addLayout(dist_row)
+
+        # Load saved defaults
+        _prefs = _load_prefs()
+        if "temperature" in _prefs:
+            self._slider_temp.setValue(int(_prefs["temperature"] * 100))
+        if "distinctive" in _prefs:
+            self.chk_distinctive.setChecked(bool(_prefs["distinctive"]))
 
         # Separator
         form_vbox.addSpacing(10)
@@ -626,6 +669,13 @@ class CharGenDialog(QDialog):
 
     def _on_temp_changed(self, v: int):
         self._lbl_temp_val.setText(f"{v / 100:.2f}")
+
+    def _save_defaults(self):
+        _save_prefs({
+            "temperature": self._slider_temp.value() / 100.0,
+            "distinctive": self.chk_distinctive.isChecked(),
+        })
+        self._set_status("Generation defaults saved.", COLOR_STATUS_RUNNING)
 
     # ------------------------------------------------------------------
     # Portrait
