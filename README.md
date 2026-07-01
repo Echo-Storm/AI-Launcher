@@ -2,7 +2,7 @@
 
 A PyQt6 desktop launcher for local AI writing sessions — manages KoboldCpp and SillyTavern as background services, with a built-in character card generator.
 
-![Python](https://img.shields.io/badge/python-3.11+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![License](https://img.shields.io/badge/license-MIT-purple)
+![Python](https://img.shields.io/badge/python-3.11+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.1.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple)
 
 ---
 
@@ -81,17 +81,20 @@ The `key` field on each model entry is how the launcher tells which model to loa
 
 ## Character Card Generator
 
-Accessed via the **Card Generator** button on the KoboldCpp card (only active when the CharGen model is loaded).
+Accessed via the **Card Generator** button on the KoboldCpp card. Works with any model currently loaded — the CharGen model produces the best results, but Cydonia or any other GGUF will also work. When clicking while KoboldCpp is stopped, it auto-loads the `chargen` model from config.
 
+- **Creativity slider** — controls temperature (0.60 Safe to 1.20 Creative, default 0.85)
+- **Distinctive character toggle** — enables a stronger system prompt that discourages clichés and pushes for unique voices
 - Fill in a character concept — the more specific, the better
 - Scenario, First Message, and Dialogue Examples are optional toggles (off by default)
 - Pick a portrait image or leave blank for a dark placeholder
+- **Copy** — copies raw generated output to clipboard (works even if JSON parsing fails)
 - Save as **PNG** (embedded `chara` tEXt chunk — ST's native format, shows portrait in the character browser) or **JSON** (flat v1 card for manual editing)
 
 ---
 
 ## Notes
 
-- Writing mode and Card Generator mode are mutually exclusive — KoboldCpp can only run one model at a time. The Card Generator button is disabled while the writing model is loaded; stop KoboldCpp first to switch.
 - `config.json` is gitignored — your model paths stay local.
 - Log file writes to `AI_Launcher_Log.txt` next to the executable on each run.
+- The Card Generator can use any loaded model, but the `chargen` key in config marks the preferred model for auto-loading when KoboldCpp is stopped.
