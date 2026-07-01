@@ -1,0 +1,32 @@
+{
+    "models": [
+        {
+            "name": "My Writing Model",
+            "key":  "writing",
+            "path": "C:\\Path\\To\\Models\\your-writing-model.gguf"
+        },
+        {
+            "name": "CharGen v3  (Card Generator)",
+            "key":  "chargen",
+            "path": "C:\\Path\\To\\Models\\CharGen\\CharGen-v3-beta-rl-83-s0.Q4_K_M.gguf"
+        }
+    ],
+    "koboldcpp": {
+        "exe":             "C:\\Path\\To\\KoboldCpp\\koboldcpp.exe",
+        "gpu_layers":      40,
+        "context_size":    8192,
+        "port":            5001,
+        "host":            "127.0.0.1",
+        "flash_attention": true,
+        "quiet":           true,
+        "use_cuda":        true,
+        "use_vulkan":      false
+    },
+    "chargen": {
+        "output_dir": "C:\\Path\\To\\SillyTavern\\data\\default-user\\characters"
+    },
+    "sillytavern": {
+        "dir":  "C:\\Path\\To\\SillyTavern",
+        "port": 8000
+    }
+}
