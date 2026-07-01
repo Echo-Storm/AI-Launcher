@@ -53,7 +53,7 @@ def build_kobold_args(model_path: str) -> list[str]:
     ]
     if _kob.get("use_cuda", True):
         args.append("--usecublas")
-    if _kob.get("use_vulkan", False):
+    elif _kob.get("use_vulkan", False):
         args.append("--usevulkan")
     if _kob.get("flash_attention", True):
         args.append("--flashattention")
@@ -71,16 +71,13 @@ KOBOLD_READY_STRINGS = ["please connect to custom endpoint", "starting kobold ap
 SILLYTAVERN_DIR  = _st.get("dir", "")
 SILLYTAVERN_ARGS = ["server.js"]
 SILLYTAVERN_URL  = f"http://127.0.0.1:{_st.get('port', 8000)}"
-SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on", f":{_st.get('port', 8000)}"]
+SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on"]
 
 # ---------------------------------------------------------------------------
 # CharGen
 # ---------------------------------------------------------------------------
 
-CHARGEN_OUTPUT_DIR = _cg.get(
-    "output_dir",
-    r"D:\Applications\SillyTavern\data\default-user\characters",
-)
+CHARGEN_OUTPUT_DIR = _cg.get("output_dir", "")
 
 # ---------------------------------------------------------------------------
 # Remote API backend (OpenRouter, Groq, LM Studio, Ollama, etc.)

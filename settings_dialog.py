@@ -265,8 +265,8 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(560, 480)
-        self.resize(600, 520)
+        self.setMinimumSize(620, 520)
+        self.resize(660, 560)
         self.setStyleSheet(_STYLE)
 
         self._cfg    = {}
@@ -414,6 +414,15 @@ class SettingsDialog(QDialog):
         for chk in (self._kob_cuda, self._kob_vulkan, self._kob_flash, self._kob_quiet):
             g.addWidget(chk, row, 0, 1, 3)
             row += 1
+
+        # Mutually exclusive — build_kobold_args() only ever passes one of --usecublas /
+        # --usevulkan (CUDA wins if both are set), so keep the UI honest about that.
+        self._kob_cuda.toggled.connect(
+            lambda checked: checked and self._kob_vulkan.setChecked(False)
+        )
+        self._kob_vulkan.toggled.connect(
+            lambda checked: checked and self._kob_cuda.setChecked(False)
+        )
 
         g.setRowStretch(row, 1)
         return w

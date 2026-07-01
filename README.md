@@ -58,6 +58,10 @@ Both backends can coexist — if both are active, tools prefer API but you can s
 - Force-terminates KoboldCpp and SillyTavern in one click
 - Useful when processes get stuck or you want a clean reset
 
+**Output log**
+- Copy button grabs the full log to your clipboard for bug reports
+- Clear button resets it so it doesn't grow unbounded over a long session
+
 ### Settings GUI
 
 Full config editor — no manual JSON editing required:
@@ -103,13 +107,26 @@ Saves your current temperature and Distinctive state to `chargen_prefs.json`. Re
 
 Optional fields are **actually optional** — unchecked fields are removed from the system prompt entirely, so the model doesn't generate them and token budget goes toward what you asked for.
 
-### Expand Personality
+### Expand / Regenerate fields
 
-After a card is generated, the **Expand Personality** button sends a dedicated second call focused entirely on the personality field. The full character card is included as context so the expansion stays coherent, but the model's attention isn't split across all fields at once.
+After a card is generated, the **Field** dropdown lets you select Personality, Scenario, or First Message and send a dedicated second call focused entirely on that field.
 
-The **Must include** field (next to the button) lets you specify traits, quirks, or details that must appear in the expanded personality — for example: *"fear of enclosed spaces, dry self-deprecating humor, compulsive need to categorize things"*. Leave it blank for a free expansion.
+- **Expand** makes the current text more detailed, keeping its existing direction — the full character card (including that field's current value) is sent as context so the result stays coherent with what's already there.
+- **Regenerate** discards the current text and writes a fresh alternative take — the field's current value is deliberately left out of the prompt so the model isn't anchored to it, while the rest of the card is still included for context.
 
-The result merges directly back into the card — the JSON output updates in place. You can expand multiple times.
+The **Must include** field lets you specify traits, details, or requirements that must appear in the result — for example: *"fear of enclosed spaces, dry self-deprecating humor, compulsive need to categorize things"*. Leave it blank for a free take.
+
+Either way, the result merges directly back into the card — the JSON output updates in place. You can expand or regenerate any field as many times as you like.
+
+A **Cancel** button appears next to Generate whenever a call is in flight (Generate, Expand, Regenerate, or Portrait Prompt), so you don't have to close the whole dialog to stop a slow or stuck request.
+
+### Portrait Prompt
+
+The **Portrait Prompt** button generates a Stable Diffusion / Midjourney prompt based on the character card — physical appearance, clothing, art style, mood, lighting, and composition as comma-separated descriptors. The result is copied to clipboard automatically and shown in an editable popup for tweaking before use. Paste it into whatever image generator you use, pick the portrait, and bring it back into the Output tab.
+
+### Import Card
+
+The **Import Card** button loads any existing `.png` or `.json` SillyTavern character card. PNG cards have the character data decoded from the `chara` tEXt metadata chunk. Once imported, all expand and portrait prompt features are available — useful for improving a card you already have or adding fields that were missing.
 
 ### Output and saving
 
@@ -227,14 +244,15 @@ or double-click `launch.bat`.
 4. Open SillyTavern (or just use CharGen directly)
 
 **Character card:**
-1. Start a backend (either one)
+1. Start a backend (either one) — or **Import Card** to load an existing `.png` or `.json` card
 2. Click **Open CharGen**
 3. Fill in a concept — be specific, the model can't invent what you don't hint at
 4. Adjust creativity and toggle Distinctive if you want something more original
 5. Enable Scenario/First Message if you want those fields
 6. Click **Generate**
-7. On the Output tab: if personality feels thin, optionally add must-include notes and click **Expand Personality**
-8. Pick a portrait, click **Save PNG** — it drops directly to your ST characters folder
+7. On the Output tab: use the **Field** dropdown to pick Personality, Scenario, or First Message, add any must-include notes, and click **Expand** to deepen it or **Regenerate** for a fresh alternative take
+8. Click **Portrait Prompt** to generate a Stable Diffusion prompt — auto-copied to clipboard
+9. Pick a portrait image, click **Save PNG** — it drops directly to your ST characters folder
 
 ---
 
@@ -242,10 +260,6 @@ or double-click `launch.bat`.
 
 Features under consideration for future versions:
 
-- **Expand other fields** — dedicated second-call expansion for Scenario and First Message, using the same must-include pattern as personality
-- **Import existing card** — load a `.png` or `.json` character card, display its fields, re-generate or expand specific fields without starting from scratch
-- **Per-field regeneration** — "Regenerate this field only" buttons in the output tab, keeping everything else intact
-- **Multi-model comparison** — generate the same concept with two models side by side
 - **Screenshot documentation** — in-app screenshots in this README
 
 Contributions and suggestions welcome via issues.

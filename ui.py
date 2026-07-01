@@ -1,14 +1,15 @@
 # ui.py — AI Writing Tools Launcher
 
 import json
-import os
-import webbrowser
 import logging
+import os
+import subprocess
+import webbrowser
 
 from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget,
+    QMainWindow, QWidget, QApplication,
     QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame,
     QSplitter, QComboBox,
@@ -207,7 +208,7 @@ class ApiCard(QFrame):
         if not API_BASE_URL:
             self.status.set_text(COLOR_STATUS_STOPPED, "Not configured")
         else:
-            self.status.set_text(COLOR_STATUS_STARTING, "Not activated")
+            self.status.set_text(COLOR_STATUS_STOPPED, "Not activated")
         row.addWidget(self.status)
         row.addStretch()
         self.btn_activate = QPushButton("Activate")
@@ -565,10 +566,29 @@ class MainWindow(QMainWindow):
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(4)
 
+        log_header = QHBoxLayout()
+        log_header.setContentsMargins(0, 0, 0, 0)
+        log_header.setSpacing(6)
+
         log_lbl = QLabel("Output")
         log_lbl.setFont(QFont(FONT_UI_FAMILY, 8))
         log_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        log_layout.addWidget(log_lbl)
+        log_header.addWidget(log_lbl)
+        log_header.addStretch()
+
+        btn_copy_log = QPushButton("Copy")
+        btn_copy_log.setFixedHeight(20)
+        btn_copy_log.setFont(QFont(FONT_UI_FAMILY, 7))
+        btn_copy_log.clicked.connect(self._copy_log)
+        log_header.addWidget(btn_copy_log)
+
+        btn_clear_log = QPushButton("Clear")
+        btn_clear_log.setFixedHeight(20)
+        btn_clear_log.setFont(QFont(FONT_UI_FAMILY, 7))
+        btn_clear_log.clicked.connect(self._clear_log)
+        log_header.addWidget(btn_clear_log)
+
+        log_layout.addLayout(log_header)
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -627,6 +647,12 @@ class MainWindow(QMainWindow):
 
     def _log_st(self, text: str):
         self._log(f"[SillyTavern] {text}", "#5ba0c8")
+
+    def _copy_log(self):
+        QApplication.clipboard().setText(self.log.toPlainText())
+
+    def _clear_log(self):
+        self.log.clear()
 
     # ------------------------------------------------------------------
     # Tool row state
@@ -721,11 +747,13 @@ class MainWindow(QMainWindow):
             self._kobold_stopping = True
             pid = self._kobold_proc.processId()
             if pid:
-                import subprocess
-                subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
+                subprocess.Popen(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
             self._kobold_proc.kill()
-            self._kobold_proc.waitForFinished(3000)
         self._kobold_ready = False
+        self.kobold_card.btn_stop.setEnabled(False)
 
     def _on_kobold_stdout(self):
         if not self._kobold_proc:
@@ -815,11 +843,14 @@ class MainWindow(QMainWindow):
             self._st_stopping = True
             pid = self._st_proc.processId()
             if pid:
-                import subprocess
-                subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
+                subprocess.Popen(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
             self._st_proc.kill()
-            self._st_proc.waitForFinished(3000)
         self._st_ready = False
+        self.btn_st_stop.setEnabled(False)
+        self.btn_st_open.setEnabled(False)
 
     def _on_st_stdout(self):
         if not self._st_proc:
@@ -908,7 +939,7 @@ class MainWindow(QMainWindow):
 
     def _deactivate_api(self):
         self._api_ready = False
-        self.api_card.status.set_text(COLOR_STATUS_STARTING, "Not activated")
+        self.api_card.status.set_text(COLOR_STATUS_STOPPED, "Not activated")
         self.api_card.model_combo.setVisible(False)
         self.api_card.btn_activate.setText("Activate")
         self._log("[API] Deactivated.", COLOR_TEXT_MUTED)
@@ -964,4 +995,9 @@ class MainWindow(QMainWindow):
             self.api_card._worker.wait(2000)
         self._stop_kobold()
         self._stop_st()
+        # Brief wait to let processes actually exit before the app quits
+        if self._kobold_proc:
+            self._kobold_proc.waitForFinished(2000)
+        if self._st_proc:
+            self._st_proc.waitForFinished(2000)
         event.accept()

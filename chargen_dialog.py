@@ -43,6 +43,77 @@ _OUTPUT = (
     "Output ONLY the raw JSON object — no markdown fences, no commentary, no preamble."
 )
 
+# ---------------------------------------------------------------------------
+# Expand-field configuration — system prompt + user instruction per field
+# ---------------------------------------------------------------------------
+
+_EXPAND_CONFIG = {
+    "personality": (
+        "You are a character card editor. Expand the personality field of the provided "
+        "SillyTavern character card to be detailed and vivid. "
+        "Return only the new personality text — no JSON, no field labels, no explanation.",
+        "Rewrite the personality field to be significantly more detailed — aim for 3-5 "
+        "substantial paragraphs covering: speech register and vocabulary, specific behavioral "
+        "mannerisms, emotional tendencies and triggers, internal contradictions, and how "
+        "they present themselves in conversation.",
+    ),
+    "scenario": (
+        "You are a character card editor. Expand the scenario field of the provided "
+        "SillyTavern character card to be detailed and immersive. "
+        "Return only the new scenario text — no JSON, no field labels, no explanation.",
+        "Rewrite the scenario field to be significantly more detailed — describe the setting, "
+        "circumstances, and atmosphere with specific sensory details. Make the world feel real "
+        "and give a clear sense of how and where interactions with this character take place.",
+    ),
+    "first_mes": (
+        "You are a character card editor. Rewrite the first_mes field of the provided "
+        "SillyTavern character card. "
+        "Return only the new first message text — no JSON, no field labels, no explanation.",
+        "Rewrite the first_mes field — write a compelling, in-character opening message that "
+        "immediately establishes the character's voice, sets the scene, and draws the reader in. "
+        "Aim for 2-3 paragraphs.",
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# Regenerate-field configuration — same fields as Expand, but instructs a fresh
+# alternative take instead of elaborating on the existing text. The current value
+# of the target field is deliberately withheld from the prompt (see
+# _regenerate_field) so the model isn't anchored to it.
+# ---------------------------------------------------------------------------
+
+_REGENERATE_CONFIG = {
+    "personality": (
+        "You are a character card editor. Write a fresh, alternative personality field for "
+        "the provided SillyTavern character card, taking a different creative angle than "
+        "whatever was there before. Return only the new personality text — no JSON, no field "
+        "labels, no explanation.",
+        "Write a new personality field from scratch based on the character's name, "
+        "description, and other fields shown below. Take a different creative angle — "
+        "different mannerisms, tone, and emotional register than a typical take on this "
+        "concept would produce.",
+    ),
+    "scenario": (
+        "You are a character card editor. Write a fresh, alternative scenario field for "
+        "the provided SillyTavern character card, taking a different creative angle than "
+        "whatever was there before. Return only the new scenario text — no JSON, no field "
+        "labels, no explanation.",
+        "Write a new scenario field from scratch based on the character's name, description, "
+        "and other fields shown below. Take a different creative angle on the setting or "
+        "circumstances than a typical take on this concept would produce.",
+    ),
+    "first_mes": (
+        "You are a character card editor. Write a fresh, alternative first_mes field for "
+        "the provided SillyTavern character card, taking a different creative angle than "
+        "whatever was there before. Return only the new first message text — no JSON, no "
+        "field labels, no explanation.",
+        "Write a new first_mes field from scratch based on the character's name, "
+        "description, and other fields shown below. Take a different opening angle — a "
+        "different situation, tone, or hook than a typical take on this concept would "
+        "produce. Aim for 2-3 paragraphs.",
+    ),
+}
+
 
 def _build_system_prompt(
     distinctive: bool = False,
@@ -133,10 +204,20 @@ def _to_st_card(data: dict, fallback_name: str = "") -> dict:
     }
 
 
+def _merge_last_card(base: dict, last_card: dict) -> dict:
+    """Overlay last_card's fields onto an ST-normalized base, preserving fields
+    (creator_notes, system_prompt, tags, extensions, etc.) that _to_st_card() zeroes
+    out. Excludes 'name' so the fallback-aware name from base isn't clobbered by an
+    explicit-but-empty name in last_card."""
+    merged = dict(base)
+    merged.update({k: v for k, v in last_card.items() if k not in ("avatar", "chat", "name")})
+    return merged
+
+
 def _to_st_card_v2(data: dict, fallback_name: str = "") -> dict:
-    v1 = _to_st_card(data, fallback_name)
+    v1 = _merge_last_card(_to_st_card(data, fallback_name), data)
     data_fields = {k: v for k, v in v1.items() if k not in ("avatar", "chat")}
-    data_fields["extensions"] = {}
+    data_fields.setdefault("extensions", {})
     return {
         "spec":         "chara_card_v2",
         "spec_version": "2.0",
@@ -381,6 +462,31 @@ QSlider::handle:horizontal:hover {{
     background: {COLOR_ACCENT};
     border: 2px solid {COLOR_TEXT};
 }}
+QComboBox {{
+    background: {COLOR_PANEL};
+    color: {COLOR_TEXT};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+QComboBox:hover {{
+    border-color: {COLOR_ACCENT_DIM};
+}}
+QComboBox:disabled {{
+    color: {COLOR_TEXT_MUTED};
+    border-color: {COLOR_BORDER};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 16px;
+}}
+QComboBox QAbstractItemView {{
+    background: {COLOR_PANEL};
+    color: {COLOR_TEXT};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    selection-background-color: {COLOR_ACCENT_DIM};
+    outline: none;
+}}
 """
 
 _PORTRAIT_PLACEHOLDER_STYLE = (
@@ -435,6 +541,8 @@ class CharGenDialog(QDialog):
         self._last_card         = None
         self._portrait_path     = None
         self._current_api_model = API_MODEL
+        self._expanding_field   = "personality"
+        self._expanding_verb    = "expanded"
 
         self._build_ui()
 
@@ -625,21 +733,45 @@ class CharGenDialog(QDialog):
         self.edit_output.setPlaceholderText("Generated output will appear here…")
         out_vbox.addWidget(self.edit_output, 1)
 
-        # Expand personality row
+        # Expand / Regenerate field row
         expand_row = QHBoxLayout()
         expand_row.setSpacing(6)
+        expand_row.addWidget(_lbl("Field:"))
+        self._expand_combo = QComboBox()
+        self._expand_combo.setFixedHeight(24)
+        self._expand_combo.setFixedWidth(112)
+        self._expand_combo.addItem("Personality",   userData="personality")
+        self._expand_combo.addItem("Scenario",      userData="scenario")
+        self._expand_combo.addItem("First Message", userData="first_mes")
+        expand_row.addWidget(self._expand_combo)
+        expand_row.addSpacing(4)
         expand_row.addWidget(_lbl("Must include:"))
         self._edit_must_include = QLineEdit()
-        self._edit_must_include.setPlaceholderText(
-            "traits, quirks, or details the personality must mention (optional)"
-        )
+        self._edit_must_include.setPlaceholderText("traits, details to include (optional)")
         expand_row.addWidget(self._edit_must_include, 1)
-        self._btn_expand = QPushButton("Expand Personality")
+        self._btn_expand = QPushButton("Expand")
         self._btn_expand.setFixedHeight(26)
         self._btn_expand.setEnabled(False)
-        self._btn_expand.clicked.connect(self._expand_personality)
+        self._btn_expand.setToolTip("Make the current field text more detailed, keeping its direction.")
+        self._btn_expand.clicked.connect(self._expand_field)
         expand_row.addWidget(self._btn_expand)
+        self._btn_regenerate = QPushButton("Regenerate")
+        self._btn_regenerate.setFixedHeight(26)
+        self._btn_regenerate.setEnabled(False)
+        self._btn_regenerate.setToolTip("Discard the current field and write a fresh alternative take.")
+        self._btn_regenerate.clicked.connect(self._regenerate_field)
+        expand_row.addWidget(self._btn_regenerate)
         out_vbox.addLayout(expand_row)
+
+        # Portrait prompt row
+        pp_row = QHBoxLayout()
+        self._btn_portrait_prompt = QPushButton("Portrait Prompt")
+        self._btn_portrait_prompt.setFixedHeight(26)
+        self._btn_portrait_prompt.setEnabled(False)
+        self._btn_portrait_prompt.clicked.connect(self._get_portrait_prompt)
+        pp_row.addWidget(self._btn_portrait_prompt)
+        pp_row.addStretch()
+        out_vbox.addLayout(pp_row)
 
         # Portrait row
         portrait_row = QHBoxLayout()
@@ -695,11 +827,23 @@ class CharGenDialog(QDialog):
         self._lbl_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
         ctrl.addWidget(self._lbl_status, 1)
 
+        self._btn_import = QPushButton("Import Card")
+        self._btn_import.setFixedHeight(28)
+        self._btn_import.clicked.connect(self._import_card)
+        ctrl.addWidget(self._btn_import)
+
         self.btn_generate = QPushButton("Generate")
         self.btn_generate.setObjectName("accent")
         self.btn_generate.setFixedHeight(28)
         self.btn_generate.clicked.connect(self._generate)
         ctrl.addWidget(self.btn_generate)
+
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setFixedHeight(28)
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.clicked.connect(self._cancel_generation)
+        ctrl.addWidget(self.btn_cancel)
 
         self.btn_copy = QPushButton("Copy")
         self.btn_copy.setFixedHeight(28)
@@ -733,7 +877,7 @@ class CharGenDialog(QDialog):
             if self._last_card is None:
                 self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
             return
-        if model_key and model_key != "chargen":
+        if model_key and model_key != "chargen" and self._last_card is None:
             self._set_status(
                 "Note: general model loaded — CharGen model gives better card results.",
                 COLOR_STATUS_STARTING,
@@ -778,17 +922,32 @@ class CharGenDialog(QDialog):
             try:
                 self._worker.finished.disconnect()
                 self._worker.error.disconnect()
-            except RuntimeError:
+            except (RuntimeError, TypeError):
                 pass
             self._worker.terminate()
             self._worker.wait(2000)
             self._set_status("Generation cancelled.", COLOR_TEXT_MUTED)
-            self.btn_generate.setEnabled(True)
+            self._set_busy(False)
         self._worker = None
+
+    def _cancel_generation(self):
+        self._cleanup_worker()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _set_busy(self, busy: bool):
+        """Central button-state switch for any in-flight worker (generate/expand/
+        portrait prompt). Keeps btn_generate, _btn_expand, _btn_portrait_prompt, and
+        btn_cancel in sync so no completion path can leave one out of step."""
+        has_card = self._last_card is not None
+        self.btn_generate.setEnabled(not busy)
+        self._btn_expand.setEnabled(has_card and not busy)
+        self._btn_regenerate.setEnabled(has_card and not busy)
+        self._btn_portrait_prompt.setEnabled(has_card and not busy)
+        self.btn_cancel.setEnabled(busy)
+        self.btn_cancel.setVisible(busy)
 
     def _set_status(self, text: str, color: str = COLOR_TEXT_MUTED):
         self._lbl_status.setText(text)
@@ -897,11 +1056,10 @@ class CharGenDialog(QDialog):
             api_key  = ""
             model    = ""
 
-        self.btn_generate.setEnabled(False)
         self.btn_copy.setEnabled(False)
         self.btn_save_json.setEnabled(False)
         self.btn_save_png.setEnabled(False)
-        self._btn_expand.setEnabled(False)
+        self._set_busy(True)
         self._set_status("Generating… this may take a minute.", COLOR_STATUS_STARTING)
 
         self._worker = _GenerateWorker(
@@ -921,7 +1079,6 @@ class CharGenDialog(QDialog):
             self.edit_output.setPlainText(pretty)
             self.btn_save_json.setEnabled(True)
             self.btn_save_png.setEnabled(True)
-            self._btn_expand.setEnabled(True)
             self._set_status(
                 "Generation complete. Save as PNG (with portrait) or JSON.",
                 COLOR_STATUS_RUNNING,
@@ -941,38 +1098,31 @@ class CharGenDialog(QDialog):
 
         self.btn_copy.setEnabled(bool(self._last_card or raw))
         self._tabs.setCurrentIndex(1)
-        self.btn_generate.setEnabled(True)
+        self._set_busy(False)
 
     def _on_error(self, msg: str):
         self._worker = None
         self._set_status(f"Error: {msg}", COLOR_STATUS_ERROR)
-        self.btn_generate.setEnabled(True)
-        self._btn_expand.setEnabled(self._last_card is not None)
+        self._set_busy(False)
 
-    def _expand_personality(self):
+    def _expand_field(self):
         if not self._last_card:
             return
 
+        field_key = self._expand_combo.currentData()
+        sys_prompt, user_instruction = _EXPAND_CONFIG[field_key]
         must_include = self._edit_must_include.text().strip()
+
         user_content = (
             f"Character card:\n{json.dumps(self._last_card, indent=2, ensure_ascii=False)}\n\n"
-            "Rewrite the personality field to be significantly more detailed — aim for 3-5 "
-            "substantial paragraphs. Cover: speech register and vocabulary, specific behavioral "
-            "mannerisms, emotional tendencies and triggers, internal contradictions, and how "
-            "they present themselves in conversation."
+            + user_instruction
         )
         if must_include:
-            user_content += (
-                f"\n\nThese specific elements must be present in the personality: {must_include}"
-            )
+            user_content += f"\n\nThese specific elements must be present: {must_include}"
 
         messages = [
-            {"role": "system", "content": (
-                "You are a character card editor. Expand the personality field of the provided "
-                "SillyTavern character card to be detailed and vivid. "
-                "Return only the new personality text — no JSON, no field labels, no explanation."
-            )},
-            {"role": "user", "content": user_content},
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": user_content},
         ]
 
         temperature = self._slider_temp.value() / 100.0
@@ -982,9 +1132,61 @@ class CharGenDialog(QDialog):
         else:
             api_base, api_key, model = self._api_base, "", ""
 
-        self._btn_expand.setEnabled(False)
-        self.btn_generate.setEnabled(False)
-        self._set_status("Expanding personality…", COLOR_STATUS_STARTING)
+        self._expanding_field = field_key
+        self._expanding_verb  = "expanded"
+        self._set_busy(True)
+        self._set_status(
+            f"Expanding {self._expand_combo.currentText().lower()}…",
+            COLOR_STATUS_STARTING,
+        )
+
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, parent=self,
+        )
+        self._worker.finished.connect(self._on_expand_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _regenerate_field(self):
+        """Discard the current value of the selected field and request a fresh
+        alternative take, grounded in the rest of the card but not anchored to the
+        text being replaced (which is deliberately omitted from the prompt)."""
+        if not self._last_card:
+            return
+
+        field_key = self._expand_combo.currentData()
+        sys_prompt, user_instruction = _REGENERATE_CONFIG[field_key]
+        must_include = self._edit_must_include.text().strip()
+
+        context_card = {k: v for k, v in self._last_card.items() if k != field_key}
+        user_content = (
+            f"Character card (other fields, for context):\n"
+            f"{json.dumps(context_card, indent=2, ensure_ascii=False)}\n\n"
+            + user_instruction
+        )
+        if must_include:
+            user_content += f"\n\nThese specific elements must be present: {must_include}"
+
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": user_content},
+        ]
+
+        temperature = self._slider_temp.value() / 100.0
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
+        else:
+            api_base, api_key, model = self._api_base, "", ""
+
+        self._expanding_field = field_key
+        self._expanding_verb  = "regenerated"
+        self._set_busy(True)
+        self._set_status(
+            f"Regenerating {self._expand_combo.currentText().lower()}…",
+            COLOR_STATUS_STARTING,
+        )
 
         self._worker = _GenerateWorker(
             api_base, messages, temperature,
@@ -999,16 +1201,146 @@ class CharGenDialog(QDialog):
         raw = raw.strip()
         if not raw:
             self._set_status("No content returned — try again.", COLOR_STATUS_ERROR)
-            self._btn_expand.setEnabled(True)
-            self.btn_generate.setEnabled(True)
+            self._set_busy(False)
             return
-        self._last_card["personality"] = raw
+        self._last_card[self._expanding_field] = raw
         self.edit_output.setPlainText(
             json.dumps(self._last_card, indent=2, ensure_ascii=False)
         )
-        self._set_status("Personality expanded.", COLOR_STATUS_RUNNING)
-        self._btn_expand.setEnabled(True)
-        self.btn_generate.setEnabled(True)
+        label = self._expand_combo.currentText()
+        self._set_status(f"{label} {self._expanding_verb}.", COLOR_STATUS_RUNNING)
+        self._set_busy(False)
+
+    def _get_portrait_prompt(self):
+        if not self._last_card:
+            return
+
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert at writing image generation prompts for AI art tools "
+                "like Stable Diffusion and Midjourney. You write detailed, evocative portrait "
+                "prompts using comma-separated descriptors."
+            )},
+            {"role": "user", "content": (
+                f"Character card:\n{json.dumps(self._last_card, indent=2, ensure_ascii=False)}\n\n"
+                "Write a detailed portrait prompt for an AI image generator. Include: physical "
+                "appearance (face, hair, eyes, skin, build), clothing and accessories, art style "
+                "suited to the character's nature, mood and expression, lighting, color palette, "
+                "and composition. Use comma-separated descriptors suitable for Stable Diffusion. "
+                "Return only the prompt — no explanation, no preamble, no labels."
+            )},
+        ]
+
+        temperature = self._slider_temp.value() / 100.0
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
+        else:
+            api_base, api_key, model = self._api_base, "", ""
+
+        self._set_busy(True)
+        self._set_status("Generating portrait prompt…", COLOR_STATUS_STARTING)
+
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, parent=self,
+        )
+        self._worker.finished.connect(self._on_portrait_prompt_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _on_portrait_prompt_done(self, raw: str):
+        self._worker = None
+        raw = raw.strip()
+        self._set_busy(False)
+
+        if not raw:
+            self._set_status("No prompt returned — try again.", COLOR_STATUS_ERROR)
+            return
+
+        QApplication.clipboard().setText(raw)
+        self._set_status("Portrait prompt generated — copied to clipboard.", COLOR_STATUS_RUNNING)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Portrait Prompt")
+        dlg.setMinimumWidth(520)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.setStyleSheet(_STYLE)
+        vbox = QVBoxLayout(dlg)
+        vbox.setContentsMargins(12, 12, 12, 12)
+        vbox.setSpacing(8)
+
+        hint = QLabel(
+            "Stable Diffusion / image generation prompt — copied to clipboard.\n"
+            "Edit before use if needed."
+        )
+        hint.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        hint.setWordWrap(True)
+        vbox.addWidget(hint)
+
+        edit = QPlainTextEdit()
+        edit.setPlainText(raw)
+        edit.setFont(QFont(FONT_LOG_FAMILY, FONT_LOG_SIZE))
+        edit.setMinimumHeight(120)
+        vbox.addWidget(edit)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_copy = QPushButton("Copy")
+        btn_copy.setFixedHeight(26)
+        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(edit.toPlainText()))
+        btn_close = QPushButton("Close")
+        btn_close.setFixedHeight(26)
+        btn_close.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_copy)
+        btn_row.addWidget(btn_close)
+        vbox.addLayout(btn_row)
+
+        dlg.exec()
+
+    def _import_card(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Character Card", "",
+            "Character cards (*.png *.json);;PNG files (*.png);;JSON files (*.json)"
+        )
+        if not path:
+            return
+
+        try:
+            if path.lower().endswith(".png"):
+                from PIL import Image
+                img = Image.open(path)
+                chara_b64 = img.info.get("chara", "")
+                if not chara_b64:
+                    QMessageBox.warning(
+                        self, "Import",
+                        "No character data found in this PNG.\n"
+                        "This may not be a SillyTavern character card."
+                    )
+                    return
+                card = json.loads(base64.b64decode(chara_b64).decode("utf-8"))
+            else:
+                with open(path, encoding="utf-8") as fh:
+                    card = json.load(fh)
+            # Unwrap v2 spec wrapper for both PNG and JSON
+            if isinstance(card, dict) and card.get("spec") == "chara_card_v2":
+                card = card.get("data", card)
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Could not read card:\n{e}")
+            return
+
+        if not isinstance(card, dict):
+            QMessageBox.warning(self, "Import", "File does not contain a valid character card.")
+            return
+
+        self._last_card = card
+        self.edit_output.setPlainText(json.dumps(card, indent=2, ensure_ascii=False))
+        self.btn_copy.setEnabled(True)
+        self.btn_save_json.setEnabled(True)
+        self.btn_save_png.setEnabled(True)
+        self._set_busy(False)
+        self._set_status(f"Imported: {os.path.basename(path)}", COLOR_STATUS_RUNNING)
+        self._tabs.setCurrentIndex(1)
 
     # ------------------------------------------------------------------
     # Clipboard
@@ -1027,7 +1359,8 @@ class CharGenDialog(QDialog):
     def _save_json(self):
         if not self._last_card:
             return
-        card = _to_st_card(self._last_card, self.edit_name.text().strip())
+        fallback = self.edit_name.text().strip()
+        card = _merge_last_card(_to_st_card(self._last_card, fallback), self._last_card)
         default_path = os.path.join(self._output_dir, f"{self._safe_name()}.json")
 
         path, _ = QFileDialog.getSaveFileName(
