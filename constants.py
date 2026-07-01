@@ -25,6 +25,7 @@ except json.JSONDecodeError as _e:
 _kob = _cfg.get("koboldcpp", {})
 _st  = _cfg.get("sillytavern", {})
 _cg  = _cfg.get("chargen", {})
+_api = _cfg.get("api", {})
 
 # ---------------------------------------------------------------------------
 # Models list — first entry is the startup default
@@ -36,7 +37,7 @@ MODELS: list[dict] = _cfg.get("models", [])
 # KoboldCpp
 # ---------------------------------------------------------------------------
 
-KOBOLD_EXE      = _kob["exe"]
+KOBOLD_EXE      = _kob.get("exe", "")
 KOBOLD_HOST     = _kob.get("host", "127.0.0.1")
 KOBOLD_PORT     = int(_kob.get("port", 5001))
 KOBOLD_API_BASE = f"http://{KOBOLD_HOST}:{KOBOLD_PORT}"
@@ -67,7 +68,7 @@ KOBOLD_READY_STRINGS = ["please connect to custom endpoint", "starting kobold ap
 # SillyTavern
 # ---------------------------------------------------------------------------
 
-SILLYTAVERN_DIR  = _st["dir"]
+SILLYTAVERN_DIR  = _st.get("dir", "")
 SILLYTAVERN_ARGS = ["server.js"]
 SILLYTAVERN_URL  = f"http://127.0.0.1:{_st.get('port', 8000)}"
 SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on", f":{_st.get('port', 8000)}"]
@@ -82,7 +83,16 @@ CHARGEN_OUTPUT_DIR = _cg.get(
 )
 
 # ---------------------------------------------------------------------------
-# EchoStorm dark theme — violet accent
+# Remote API backend (OpenRouter, Groq, LM Studio, Ollama, etc.)
+# Optional — leave "api" block out of config.json to disable.
+# ---------------------------------------------------------------------------
+
+API_BASE_URL = _api.get("base_url", "").rstrip("/")
+API_KEY      = _api.get("api_key",  "")
+API_MODEL    = _api.get("model",    "")
+
+# ---------------------------------------------------------------------------
+# EchoStorm dark theme
 # ---------------------------------------------------------------------------
 
 COLOR_BG            = "#181818"

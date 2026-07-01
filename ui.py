@@ -8,7 +8,7 @@ import logging
 from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
+    QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame,
     QSplitter, QComboBox,
@@ -55,12 +55,11 @@ class StatusBadge(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Service card — one card per process
+# Service card — backend process card (KoboldCpp only)
 # ---------------------------------------------------------------------------
 
 class ServiceCard(QFrame):
-    def __init__(self, title: str, has_open_btn: bool = False,
-                 has_chargen_btn: bool = False,
+    def __init__(self, title: str,
                  model_items: list[tuple[str, str]] | None = None,
                  parent=None):
         super().__init__(parent)
@@ -70,24 +69,20 @@ class ServiceCard(QFrame):
         outer.setContentsMargins(14, 10, 14, 10)
         outer.setSpacing(8)
 
-        # Title
         title_lbl = QLabel(title)
         title_lbl.setFont(QFont(FONT_UI_FAMILY, 10, QFont.Weight.Bold))
         title_lbl.setStyleSheet(f"color: {COLOR_ACCENT};")
         outer.addWidget(title_lbl)
 
-        # Subtitle — shows loaded model name (hidden when no model loaded)
         self.lbl_subtitle = QLabel("")
         self.lbl_subtitle.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE - 1))
         self.lbl_subtitle.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
         self.lbl_subtitle.setVisible(False)
         outer.addWidget(self.lbl_subtitle)
 
-        # Status badge
         self.status = StatusBadge()
         outer.addWidget(self.status)
 
-        # Model selector (optional)
         if model_items:
             self.model_combo = QComboBox()
             self.model_combo.setFixedHeight(26)
@@ -97,7 +92,6 @@ class ServiceCard(QFrame):
         else:
             self.model_combo = None
 
-        # Buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
@@ -111,25 +105,6 @@ class ServiceCard(QFrame):
 
         btn_row.addWidget(self.btn_start)
         btn_row.addWidget(self.btn_stop)
-
-        if has_open_btn:
-            self.btn_open = QPushButton("Open in Browser")
-            self.btn_open.setFixedHeight(26)
-            self.btn_open.setEnabled(False)
-            self.btn_open.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
-            btn_row.addWidget(self.btn_open)
-        else:
-            self.btn_open = None
-
-        if has_chargen_btn:
-            self.btn_chargen = QPushButton("Card Generator")
-            self.btn_chargen.setFixedHeight(26)
-            self.btn_chargen.setEnabled(True)
-            self.btn_chargen.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
-            btn_row.addWidget(self.btn_chargen)
-        else:
-            self.btn_chargen = None
-
         btn_row.addStretch()
         outer.addLayout(btn_row)
 
@@ -139,7 +114,7 @@ class ServiceCard(QFrame):
 # ---------------------------------------------------------------------------
 
 class _ApiTestWorker(QThread):
-    success = pyqtSignal(str, list)   # (status_msg, [model_id, ...])
+    success = pyqtSignal(str, list)
     error   = pyqtSignal(str)
 
     def run(self):
@@ -150,7 +125,6 @@ class _ApiTestWorker(QThread):
         if API_KEY:
             headers["Authorization"] = f"Bearer {API_KEY}"
 
-        # Try /v1/models — fast, free, widely supported
         try:
             req = urllib.request.Request(f"{API_BASE_URL}/v1/models", headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -169,7 +143,6 @@ class _ApiTestWorker(QThread):
         except Exception:
             pass
 
-        # Fallback: 1-token completion ping
         payload = json.dumps({
             **({"model": API_MODEL} if API_MODEL else {}),
             "messages": [{"role": "user", "content": "Hi"}],
@@ -194,7 +167,7 @@ class _ApiTestWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# API card — compact, no process controls
+# API card — compact backend card for remote API
 # ---------------------------------------------------------------------------
 
 class ApiCard(QFrame):
@@ -220,7 +193,6 @@ class ApiCard(QFrame):
         url_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
         outer.addWidget(url_lbl)
 
-        # Model selector — hidden until Activate populates it
         self.model_combo = QComboBox()
         self.model_combo.setFixedHeight(24)
         self.model_combo.setVisible(False)
@@ -251,7 +223,6 @@ class ApiCard(QFrame):
         self.model_combo.clear()
         for mid in sorted(model_ids):
             self.model_combo.addItem(mid, userData=mid)
-        # Restore previous selection or prefer configured default
         prefer = current or API_MODEL
         idx = self.model_combo.findData(prefer)
         if idx >= 0:
@@ -272,7 +243,7 @@ class ApiCard(QFrame):
 
 
 # ---------------------------------------------------------------------------
-# Main window
+# Stylesheet
 # ---------------------------------------------------------------------------
 
 STYLESHEET = f"""
@@ -280,6 +251,11 @@ QMainWindow, QWidget#root {{
     background: {COLOR_BG};
 }}
 QFrame#ServiceCard {{
+    background: {COLOR_PANEL};
+    border: 1px solid {COLOR_BORDER};
+    border-radius: 6px;
+}}
+QFrame#ToolsSection {{
     background: {COLOR_PANEL};
     border: 1px solid {COLOR_BORDER};
     border-radius: 6px;
@@ -306,6 +282,14 @@ QPushButton#accent {{
 }}
 QPushButton#accent:hover:enabled {{
     background: {COLOR_ACCENT};
+}}
+QPushButton#danger {{
+    background: #3d1a1a;
+    border-color: {COLOR_STATUS_ERROR};
+    color: {COLOR_STATUS_ERROR};
+}}
+QPushButton#danger:hover:enabled {{
+    background: #5a2020;
 }}
 QTextEdit {{
     background: {COLOR_PANEL};
@@ -359,25 +343,32 @@ QComboBox QAbstractItemView {{
 }}
 """
 
+_BTN_ST_START_READY = (
+    f"background: {COLOR_ACCENT_DIM}; border-color: {COLOR_ACCENT}; color: {COLOR_ACCENT};"
+)
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(580, 580)
-        self.resize(660, 700)
+        self.setMinimumSize(580, 560)
+        self.resize(680, 720)
         self.setStyleSheet(STYLESHEET)
 
-        self._kobold_proc           = None
-        self._st_proc               = None
-        self._kobold_ready          = False
-        self._st_ready              = False
-        self._kobold_stopping       = False
-        self._st_stopping           = False
-        self._st_pending_autostart  = False
-        self._current_model_key     = None
-        self._pending_chargen_open  = False
-        self._chargen_dlg           = None
+        self._kobold_proc       = None
+        self._st_proc           = None
+        self._kobold_ready      = False
+        self._st_ready          = False
+        self._kobold_stopping   = False
+        self._st_stopping       = False
+        self._current_model_key = None
+        self._chargen_dlg       = None
+        self._api_ready         = False
 
         self._build_ui()
 
@@ -401,19 +392,45 @@ class MainWindow(QMainWindow):
 
         hdr_title = QLabel(APP_NAME)
         hdr_title.setObjectName("header")
-        hdr_title.setStyleSheet(f"color: {COLOR_TEXT}; font-size: 11pt; font-weight: bold; background: transparent;")
-
+        hdr_title.setStyleSheet(
+            f"color: {COLOR_TEXT}; font-size: 11pt; font-weight: bold; background: transparent;"
+        )
         hdr_ver = QLabel(f"v{APP_VERSION}")
         hdr_ver.setObjectName("version")
-        hdr_ver.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt; background: transparent;")
+        hdr_ver.setStyleSheet(
+            f"color: {COLOR_TEXT_MUTED}; font-size: 8pt; background: transparent;"
+        )
+        btn_settings = QPushButton("Settings")
+        btn_settings.setFixedHeight(24)
+        btn_settings.setFont(QFont(FONT_UI_FAMILY, 8))
+        btn_settings.setStyleSheet(
+            f"background: transparent; border: 1px solid {COLOR_ACCENT};"
+            f" color: {COLOR_TEXT}; border-radius: 3px; padding: 1px 8px;"
+        )
+        btn_settings.clicked.connect(self._open_settings)
+
+        btn_donate = QPushButton("♥ Donate")
+        btn_donate.setFixedHeight(24)
+        btn_donate.setFont(QFont(FONT_UI_FAMILY, 8))
+        btn_donate.setStyleSheet(
+            "background: transparent; border: none;"
+            " color: #c0665a; padding: 1px 4px;"
+        )
+        btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_donate.clicked.connect(
+            lambda: webbrowser.open("https://ko-fi.com/xechostormx")
+        )
 
         hdr_layout.addWidget(hdr_title)
         hdr_layout.addStretch()
+        hdr_layout.addWidget(btn_donate)
+        hdr_layout.addSpacing(6)
+        hdr_layout.addWidget(btn_settings)
+        hdr_layout.addSpacing(10)
         hdr_layout.addWidget(hdr_ver)
         header_row.setFixedHeight(40)
         vbox.addWidget(header_row)
 
-        # Accent divider under header
         _div = QFrame()
         _div.setFixedHeight(2)
         _div.setStyleSheet(f"background: {COLOR_ACCENT_DIM}; border: none;")
@@ -425,51 +442,119 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(12, 12, 12, 12)
         content_layout.setSpacing(10)
 
-        # Splitter: service cards (top) | log (bottom)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
 
-        # Service cards pane
         cards_widget = QWidget()
         cards_layout = QVBoxLayout(cards_widget)
         cards_layout.setContentsMargins(0, 0, 0, 0)
         cards_layout.setSpacing(8)
 
+        # ── Backends ──────────────────────────────────────────────────
+
+        cards_layout.addWidget(self._section_header("Backends"))
+
+        backends_row = QHBoxLayout()
+        backends_row.setSpacing(8)
+
         self.kobold_card = ServiceCard(
-            "KoboldCpp  ·  Model Backend",
-            has_chargen_btn=True,
+            "KoboldCpp  ·  Local Backend",
             model_items=[(m["name"], m.get("key", "")) for m in MODELS],
         )
-        self.st_card  = ServiceCard("SillyTavern  ·  Writing Interface", has_open_btn=True)
         self.api_card = ApiCard()
 
-        cards_layout.addWidget(self.kobold_card)
-        cards_layout.addWidget(self.st_card)
-        cards_layout.addWidget(self.api_card)
+        backends_row.addWidget(self.kobold_card, 1)
+        backends_row.addWidget(self.api_card, 1)
+        cards_layout.addLayout(backends_row)
 
-        # Global controls row
-        global_row = QHBoxLayout()
-        global_row.setSpacing(8)
-        self.btn_start_all = QPushButton("Start All")
-        self.btn_start_all.setObjectName("accent")
-        self.btn_start_all.setFixedHeight(28)
-        self.btn_stop_all  = QPushButton("Stop All")
-        self.btn_stop_all.setFixedHeight(28)
-        for b in (self.btn_start_all, self.btn_stop_all):
+        # ── Tools ─────────────────────────────────────────────────────
+
+        cards_layout.addWidget(self._section_header("Tools"))
+
+        tools_frame = QFrame()
+        tools_frame.setObjectName("ToolsSection")
+        tools_vbox = QVBoxLayout(tools_frame)
+        tools_vbox.setContentsMargins(0, 0, 0, 0)
+        tools_vbox.setSpacing(0)
+
+        # SillyTavern tool row
+        st_row = QWidget()
+        st_row.setStyleSheet(f"background: transparent;")
+        st_layout = QHBoxLayout(st_row)
+        st_layout.setContentsMargins(14, 9, 14, 9)
+        st_layout.setSpacing(8)
+
+        st_title = QLabel("SillyTavern")
+        st_title.setFont(QFont(FONT_UI_FAMILY, 9, QFont.Weight.Bold))
+        st_title.setStyleSheet(f"color: {COLOR_TEXT};")
+        st_title.setFixedWidth(108)
+        st_layout.addWidget(st_title)
+
+        self.st_status = StatusBadge()
+        st_layout.addWidget(self.st_status)
+
+        self.st_via_lbl = QLabel("")
+        self.st_via_lbl.setFont(QFont(FONT_UI_FAMILY, 8))
+        self.st_via_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        st_layout.addWidget(self.st_via_lbl, 1)
+
+        self.btn_st_start = QPushButton("Start")
+        self.btn_st_stop  = QPushButton("Stop")
+        self.btn_st_open  = QPushButton("Open ST")
+        self.btn_st_stop.setEnabled(False)
+        self.btn_st_open.setEnabled(False)
+        for b in (self.btn_st_start, self.btn_st_stop, self.btn_st_open):
+            b.setFixedHeight(26)
             b.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
-        global_row.addWidget(self.btn_start_all)
-        global_row.addWidget(self.btn_stop_all)
-        global_row.addStretch()
-        cards_layout.addLayout(global_row)
+        st_layout.addWidget(self.btn_st_start)
+        st_layout.addWidget(self.btn_st_stop)
+        st_layout.addWidget(self.btn_st_open)
 
-        hint = QLabel(
-            "KoboldCpp loads a large model on first start — this takes 1-2 minutes. "
-            "Use Start All to launch both services; SillyTavern will wait for KoboldCpp to be ready."
-        )
-        hint.setWordWrap(True)
-        hint.setFont(QFont(FONT_UI_FAMILY, 8))
-        hint.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; padding-top: 4px;")
-        cards_layout.addWidget(hint)
+        tools_vbox.addWidget(st_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {COLOR_BORDER}; border: none;")
+        tools_vbox.addWidget(sep)
+
+        # CharGen tool row
+        cg_row = QWidget()
+        cg_row.setStyleSheet("background: transparent;")
+        cg_layout = QHBoxLayout(cg_row)
+        cg_layout.setContentsMargins(14, 9, 14, 9)
+        cg_layout.setSpacing(8)
+
+        cg_title = QLabel("Character Card Generator")
+        cg_title.setFont(QFont(FONT_UI_FAMILY, 9, QFont.Weight.Bold))
+        cg_title.setStyleSheet(f"color: {COLOR_TEXT};")
+        cg_title.setFixedWidth(180)
+        cg_layout.addWidget(cg_title)
+
+        self.chargen_via_lbl = QLabel("")
+        self.chargen_via_lbl.setFont(QFont(FONT_UI_FAMILY, 8))
+        self.chargen_via_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        cg_layout.addWidget(self.chargen_via_lbl, 1)
+
+        self.btn_chargen = QPushButton("Open CharGen")
+        self.btn_chargen.setFixedHeight(26)
+        self.btn_chargen.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
+        cg_layout.addWidget(self.btn_chargen)
+
+        tools_vbox.addWidget(cg_row)
+
+        # Kill All footer
+        kill_row = QHBoxLayout()
+        kill_row.setContentsMargins(14, 6, 14, 8)
+        self.btn_kill_all = QPushButton("Kill All")
+        self.btn_kill_all.setObjectName("danger")
+        self.btn_kill_all.setFixedHeight(24)
+        self.btn_kill_all.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
+        kill_row.addStretch()
+        kill_row.addWidget(self.btn_kill_all)
+        tools_vbox.addLayout(kill_row)
+
+        cards_layout.addWidget(tools_frame)
         cards_layout.addStretch()
 
         splitter.addWidget(cards_widget)
@@ -491,7 +576,7 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.log)
 
         splitter.addWidget(log_pane)
-        splitter.setSizes([400, 200])
+        splitter.setSizes([420, 200])
 
         content_layout.addWidget(splitter)
         vbox.addWidget(content)
@@ -499,14 +584,32 @@ class MainWindow(QMainWindow):
         # Wire up signals
         self.kobold_card.btn_start.clicked.connect(self._start_kobold_writing)
         self.kobold_card.btn_stop.clicked.connect(self._stop_kobold)
-        self.kobold_card.btn_chargen.clicked.connect(self._click_chargen)
-        self.st_card.btn_start.clicked.connect(self._start_st)
-        self.st_card.btn_stop.clicked.connect(self._stop_st)
-        self.st_card.btn_open.clicked.connect(self._open_st)
-        self.btn_start_all.clicked.connect(self._start_all)
-        self.btn_stop_all.clicked.connect(self._stop_all)
+        self.btn_st_start.clicked.connect(self._start_st)
+        self.btn_st_stop.clicked.connect(self._stop_st)
+        self.btn_st_open.clicked.connect(self._open_st)
+        self.btn_chargen.clicked.connect(self._open_chargen)
+        self.btn_kill_all.clicked.connect(self._kill_all)
         self.api_card.btn_activate.clicked.connect(self._activate_api)
         self.api_card.model_changed.connect(self._on_api_model_changed)
+
+        self._update_tools()
+
+    @staticmethod
+    def _section_header(text: str) -> QWidget:
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 2, 0, 2)
+        h.setSpacing(8)
+        lbl = QLabel(text.upper())
+        lbl.setFont(QFont(FONT_UI_FAMILY, 7, QFont.Weight.Bold))
+        lbl.setStyleSheet(f"color: {COLOR_ACCENT_DIM}; letter-spacing: 1px;")
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background: {COLOR_BORDER}; border: none;")
+        h.addWidget(lbl)
+        h.addWidget(line, 1)
+        return w
 
     # ------------------------------------------------------------------
     # Logging helpers
@@ -526,24 +629,57 @@ class MainWindow(QMainWindow):
         self._log(f"[SillyTavern] {text}", "#5ba0c8")
 
     # ------------------------------------------------------------------
+    # Tool row state
+    # ------------------------------------------------------------------
+
+    def _update_tools(self):
+        if self._api_ready:
+            model = self.api_card.current_model
+            via   = f"via API — {model}" if model else "via API"
+            color = "#4a9edd"
+        elif self._kobold_ready:
+            m    = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
+            name = m["name"] if m else "KoboldCpp"
+            via  = f"via KoboldCpp — {name}"
+            color = COLOR_STATUS_RUNNING
+        else:
+            via   = "start a backend above"
+            color = COLOR_TEXT_MUTED
+
+        style = f"color: {color}; font-size: 8pt;"
+        self.st_via_lbl.setText(via)
+        self.st_via_lbl.setStyleSheet(style)
+        self.chargen_via_lbl.setText(via)
+        self.chargen_via_lbl.setStyleSheet(style)
+
+        backend_ready = self._api_ready or self._kobold_ready
+        if backend_ready and not self._st_ready:
+            self.btn_st_start.setStyleSheet(_BTN_ST_START_READY)
+        else:
+            self.btn_st_start.setStyleSheet("")
+
+    # ------------------------------------------------------------------
     # KoboldCpp process
     # ------------------------------------------------------------------
 
     def _start_kobold_writing(self):
         combo = self.kobold_card.model_combo
-        key = combo.currentData() if combo else "cydonia"
-        self._start_kobold(key or "cydonia")
+        key = combo.currentData() if combo else ""
+        self._start_kobold(key or (MODELS[0].get("key", "") if MODELS else ""))
 
     def _start_kobold(self, model_key: str):
         if self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+
+        if not KOBOLD_EXE or not os.path.isfile(KOBOLD_EXE):
+            self._log("[KoboldCpp] ERROR: Executable not found — check Settings.", COLOR_STATUS_ERROR)
+            self.kobold_card.status.set_error()
             return
 
         model = next((m for m in MODELS if m.get("key") == model_key), MODELS[0] if MODELS else None)
         if not model:
             self._log("[KoboldCpp] ERROR: No models configured in config.json.", COLOR_STATUS_ERROR)
             self.kobold_card.status.set_error()
-            self._st_pending_autostart = False
-            self._pending_chargen_open = False
             return
 
         model_path = model["path"]
@@ -552,8 +688,6 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(model_path):
             self._log_kobold(f"ERROR: Model file not found:\n  {model_path}")
             self.kobold_card.status.set_error()
-            self._st_pending_autostart = False
-            self._pending_chargen_open = False
             return
 
         self._current_model_key = model_key
@@ -563,11 +697,10 @@ class MainWindow(QMainWindow):
         self.kobold_card.lbl_subtitle.setVisible(True)
         self.kobold_card.btn_start.setEnabled(False)
         self.kobold_card.btn_stop.setEnabled(True)
-        self.kobold_card.btn_chargen.setEnabled(False)
-        self.kobold_card.btn_chargen.setToolTip("")
         if self.kobold_card.model_combo:
             self.kobold_card.model_combo.setEnabled(False)
         self._log_kobold(f"Starting with model: {model_name}")
+        self._update_tools()
 
         proc = QProcess(self)
         proc.setProgram(KOBOLD_EXE)
@@ -590,11 +723,15 @@ class MainWindow(QMainWindow):
         self._kobold_ready = False
 
     def _on_kobold_stdout(self):
+        if not self._kobold_proc:
+            return
         data = self._kobold_proc.readAllStandardOutput().data().decode("utf-8", errors="replace")
         self._log_kobold(data)
         self._check_kobold_ready(data)
 
     def _on_kobold_stderr(self):
+        if not self._kobold_proc:
+            return
         data = self._kobold_proc.readAllStandardError().data().decode("utf-8", errors="replace")
         self._log_kobold(data)
         self._check_kobold_ready(data)
@@ -602,31 +739,17 @@ class MainWindow(QMainWindow):
     def _check_kobold_ready(self, text: str):
         if self._kobold_ready:
             return
-        lower = text.lower()
-        if any(s in lower for s in KOBOLD_READY_STRINGS):
+        if any(s in text.lower() for s in KOBOLD_READY_STRINGS):
             self._kobold_ready = True
             self.kobold_card.status.set_running()
-
-            model = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
-            model_name = model["name"] if model else (self._current_model_key or "Unknown")
+            m = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
+            model_name = m["name"] if m else (self._current_model_key or "Unknown")
             self.kobold_card.lbl_subtitle.setText(model_name)
-            self._log_kobold(f"Ready  —  {model_name}")
-
-            self.kobold_card.btn_chargen.setEnabled(True)
-            self.kobold_card.btn_chargen.setToolTip("")
-
-            if self._pending_chargen_open:
-                self._pending_chargen_open = False
-                self._open_chargen()
-
-            if self._st_pending_autostart:
-                self._st_pending_autostart = False
-                self._start_st()
+            self._log_kobold(f"Ready — {model_name}")
+            self._update_tools()
 
     def _on_kobold_finished(self, exit_code: int, exit_status):
         self._kobold_ready = False
-        self._st_pending_autostart = False
-        self._pending_chargen_open = False
         self._current_model_key = None
         if self._kobold_stopping or exit_code == 0:
             self.kobold_card.status.set_stopped()
@@ -636,12 +759,11 @@ class MainWindow(QMainWindow):
         self.kobold_card.lbl_subtitle.setVisible(False)
         self.kobold_card.btn_start.setEnabled(True)
         self.kobold_card.btn_stop.setEnabled(False)
-        self.kobold_card.btn_chargen.setEnabled(True)
-        self.kobold_card.btn_chargen.setToolTip("")
         if self.kobold_card.model_combo:
             self.kobold_card.model_combo.setEnabled(True)
         self._log_kobold(f"Exited (code {exit_code})")
         self._kobold_proc = None
+        self._update_tools()
 
     # ------------------------------------------------------------------
     # SillyTavern process
@@ -651,20 +773,26 @@ class MainWindow(QMainWindow):
         if self._st_proc and self._st_proc.state() != QProcess.ProcessState.NotRunning:
             return
 
+        if not SILLYTAVERN_DIR or not os.path.isdir(SILLYTAVERN_DIR):
+            self._log("[SillyTavern] ERROR: Directory not found — check Settings.", COLOR_STATUS_ERROR)
+            self.st_status.set_error()
+            return
+
         self._st_ready = False
-        self.st_card.status.set_starting()
-        self.st_card.btn_start.setEnabled(False)
-        self.st_card.btn_stop.setEnabled(True)
-        if self.st_card.btn_open:
-            self.st_card.btn_open.setEnabled(False)
+        self.st_status.set_starting()
+        self.btn_st_start.setEnabled(False)
+        self.btn_st_stop.setEnabled(True)
+        self.btn_st_open.setEnabled(False)
+        self.btn_st_start.setStyleSheet("")
         self._log_st("Starting…")
 
         node_exe = self._find_node()
         if not node_exe:
             self._log("ERROR: node.exe not found on PATH.", COLOR_STATUS_ERROR)
-            self.st_card.status.set_error()
-            self.st_card.btn_start.setEnabled(True)
-            self.st_card.btn_stop.setEnabled(False)
+            self.st_status.set_error()
+            self.btn_st_start.setEnabled(True)
+            self.btn_st_stop.setEnabled(False)
+            self._update_tools()
             return
 
         proc = QProcess(self)
@@ -689,11 +817,15 @@ class MainWindow(QMainWindow):
         self._st_ready = False
 
     def _on_st_stdout(self):
+        if not self._st_proc:
+            return
         data = self._st_proc.readAllStandardOutput().data().decode("utf-8", errors="replace")
         self._log_st(data)
         self._check_st_ready(data)
 
     def _on_st_stderr(self):
+        if not self._st_proc:
+            return
         data = self._st_proc.readAllStandardError().data().decode("utf-8", errors="replace")
         self._log_st(data)
         self._check_st_ready(data)
@@ -701,69 +833,61 @@ class MainWindow(QMainWindow):
     def _check_st_ready(self, text: str):
         if self._st_ready:
             return
-        lower = text.lower()
-        if any(s in lower for s in SILLYTAVERN_READY_STRINGS):
+        if any(s in text.lower() for s in SILLYTAVERN_READY_STRINGS):
             self._st_ready = True
-            self.st_card.status.set_running()
-            if self.st_card.btn_open:
-                self.st_card.btn_open.setEnabled(True)
+            self.st_status.set_running()
+            self.btn_st_open.setEnabled(True)
             self._log_st("Ready.")
+            self._update_tools()
 
     def _on_st_finished(self, exit_code: int, exit_status):
         self._st_ready = False
         if self._st_stopping or exit_code == 0:
-            self.st_card.status.set_stopped()
+            self.st_status.set_stopped()
         else:
-            self.st_card.status.set_error()
+            self.st_status.set_error()
         self._st_stopping = False
-        self.st_card.btn_start.setEnabled(True)
-        self.st_card.btn_stop.setEnabled(False)
-        if self.st_card.btn_open:
-            self.st_card.btn_open.setEnabled(False)
+        self.btn_st_start.setEnabled(True)
+        self.btn_st_stop.setEnabled(False)
+        self.btn_st_open.setEnabled(False)
         self._log_st(f"Exited (code {exit_code})")
         self._st_proc = None
+        self._update_tools()
 
     # ------------------------------------------------------------------
     # Global controls
     # ------------------------------------------------------------------
 
-    def _start_all(self):
-        if self._kobold_ready:
-            self._start_st()
-        else:
-            self._st_pending_autostart = True
-            combo = self.kobold_card.model_combo
-            key = combo.currentData() if combo else "cydonia"
-            self._start_kobold(key or "cydonia")
-
-    def _stop_all(self):
+    def _kill_all(self):
         self._stop_kobold()
         self._stop_st()
 
     def _open_st(self):
         webbrowser.open(SILLYTAVERN_URL)
 
-    def _click_chargen(self):
-        if self._kobold_ready:
-            self._open_chargen()
-        elif not (self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning):
-            self._pending_chargen_open = True
-            self._start_kobold("chargen")
+    # ------------------------------------------------------------------
+    # CharGen
+    # ------------------------------------------------------------------
 
     def _open_chargen(self):
         from chargen_dialog import CharGenDialog
         if self._chargen_dlg is None:
             self._chargen_dlg = CharGenDialog(KOBOLD_API_BASE, CHARGEN_OUTPUT_DIR, self)
         self._chargen_dlg.set_model_hint(self._current_model_key)
+        self._chargen_dlg.set_api_model(self.api_card.current_model)
+        self._chargen_dlg.auto_select_backend(self._api_ready, self._kobold_ready)
         self._chargen_dlg.show()
         self._chargen_dlg.raise_()
         self._chargen_dlg.activateWindow()
 
     # ------------------------------------------------------------------
-    # API backend test
+    # API backend
     # ------------------------------------------------------------------
 
     def _activate_api(self):
+        if self._api_ready:
+            self._deactivate_api()
+            return
         if self.api_card._worker and self.api_card._worker.isRunning():
             return
         self.api_card.btn_activate.setEnabled(False)
@@ -771,15 +895,32 @@ class MainWindow(QMainWindow):
         w = _ApiTestWorker(self)
         w.success.connect(self._on_api_test_ok)
         w.error.connect(self._on_api_test_error)
-        w.finished.connect(lambda: self.api_card.btn_activate.setEnabled(True))
+        def _on_finished():
+            self.api_card._worker = None
+            self.api_card.btn_activate.setEnabled(True)
+        w.finished.connect(_on_finished)
         self.api_card._worker = w
         w.start()
 
+    def _deactivate_api(self):
+        self._api_ready = False
+        self.api_card.status.set_text(COLOR_STATUS_STARTING, "Not activated")
+        self.api_card.model_combo.setVisible(False)
+        self.api_card.btn_activate.setText("Activate")
+        self._log("[API] Deactivated.", COLOR_TEXT_MUTED)
+        if self._chargen_dlg is not None:
+            self._chargen_dlg.auto_select_backend(False, self._kobold_ready)
+        self._update_tools()
+
     def _on_api_test_ok(self, msg: str, models: list):
+        self._api_ready = True
+        self.api_card.btn_activate.setText("Deactivate")
         self.api_card.status.set_text(COLOR_STATUS_RUNNING, msg)
         self._log(f"[API] {msg}", COLOR_STATUS_RUNNING)
         if models:
-            self.api_card.populate_models(models)
+            self.api_card.populate_models(models)  # fires model_changed → _update_tools
+        else:
+            self._update_tools()
 
     def _on_api_test_error(self, msg: str):
         self.api_card.status.set_text(COLOR_STATUS_ERROR, msg)
@@ -789,21 +930,24 @@ class MainWindow(QMainWindow):
         self._log(f"[API] Active model: {model}", COLOR_TEXT_MUTED)
         if self._chargen_dlg is not None:
             self._chargen_dlg.set_api_model(model)
+        self._update_tools()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _open_settings(self):
+        from settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        dlg.exec()
 
     def _find_node(self) -> str | None:
         import shutil
         path = shutil.which("node")
         if path:
             return path
-        candidates = [
-            r"C:\Program Files\nodejs\node.exe",
-            r"C:\Program Files (x86)\nodejs\node.exe",
-        ]
-        for c in candidates:
+        for c in (r"C:\Program Files\nodejs\node.exe",
+                  r"C:\Program Files (x86)\nodejs\node.exe"):
             if os.path.isfile(c):
                 return c
         return None
@@ -812,8 +956,8 @@ class MainWindow(QMainWindow):
         if self._chargen_dlg is not None:
             self._chargen_dlg.close()
         if self.api_card._worker and self.api_card._worker.isRunning():
-            self.api_card._worker.quit()
-            self.api_card._worker.wait(1000)
+            self.api_card._worker.terminate()
+            self.api_card._worker.wait(2000)
         self._stop_kobold()
         self._stop_st()
         event.accept()

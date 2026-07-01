@@ -28,5 +28,10 @@
     "sillytavern": {
         "dir":  "C:\\Path\\To\\SillyTavern",
         "port": 8000
+    },
+    "api": {
+        "base_url": "https://openrouter.ai/api",
+        "api_key":  "sk-or-...",
+        "model":    "meta-llama/llama-3.1-8b-instruct:free"
     }
 }

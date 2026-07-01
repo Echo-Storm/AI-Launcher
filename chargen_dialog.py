@@ -135,7 +135,7 @@ def _make_png_with_chara(card_v2: dict, portrait_path: str | None, output_path: 
     if portrait_path and os.path.isfile(portrait_path):
         img = Image.open(portrait_path).convert("RGBA")
         if img.width > 1024 or img.height > 1024:
-            img.thumbnail((1024, 1024), Image.LANCZOS)
+            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
     else:
         img = Image.new("RGBA", (512, 512), (26, 17, 40, 255))
 
@@ -194,7 +194,7 @@ class _GenerateWorker(QThread):
             )
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read())
-                text = data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"]["content"] or ""
                 self.finished.emit(text)
         except urllib.error.HTTPError as e:
             if e.code == 401:
@@ -265,12 +265,13 @@ def _load_prefs() -> dict:
         return {}
 
 
-def _save_prefs(prefs: dict) -> None:
+def _save_prefs(prefs: dict) -> bool:
     try:
         with open(_PREFS_PATH, "w", encoding="utf-8") as f:
             json.dump(prefs, f, indent=2)
+        return True
     except Exception:
-        pass
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -520,10 +521,13 @@ class CharGenDialog(QDialog):
 
         # Load saved defaults
         _prefs = _load_prefs()
-        if "temperature" in _prefs:
-            self._slider_temp.setValue(int(_prefs["temperature"] * 100))
-        if "distinctive" in _prefs:
-            self.chk_distinctive.setChecked(bool(_prefs["distinctive"]))
+        try:
+            if "temperature" in _prefs:
+                self._slider_temp.setValue(int(float(_prefs["temperature"]) * 100))
+            if "distinctive" in _prefs:
+                self.chk_distinctive.setChecked(bool(_prefs["distinctive"]))
+        except (TypeError, ValueError):
+            pass
 
         # Separator
         form_vbox.addSpacing(10)
@@ -715,6 +719,19 @@ class CharGenDialog(QDialog):
                 label = f"API  —  {model}" if model else "API  (remote)"
                 self._combo_backend.setItemText(idx, label)
 
+    def auto_select_backend(self, api_ready: bool, kobold_ready: bool):
+        """Switch backend combo to the only available backend when there's no ambiguity."""
+        if not self._combo_backend:
+            return
+        if api_ready and not kobold_ready:
+            idx = self._combo_backend.findData("api")
+            if idx >= 0:
+                self._combo_backend.setCurrentIndex(idx)
+        elif kobold_ready and not api_ready:
+            idx = self._combo_backend.findData("local")
+            if idx >= 0:
+                self._combo_backend.setCurrentIndex(idx)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -759,11 +776,14 @@ class CharGenDialog(QDialog):
         self._lbl_temp_val.setText(f"{v / 100:.2f}")
 
     def _save_defaults(self):
-        _save_prefs({
+        ok = _save_prefs({
             "temperature": self._slider_temp.value() / 100.0,
             "distinctive": self.chk_distinctive.isChecked(),
         })
-        self._set_status("Generation defaults saved.", COLOR_STATUS_RUNNING)
+        if ok:
+            self._set_status("Generation defaults saved.", COLOR_STATUS_RUNNING)
+        else:
+            self._set_status("Could not save defaults — check file permissions.", COLOR_STATUS_ERROR)
 
     # ------------------------------------------------------------------
     # Portrait
@@ -872,10 +892,16 @@ class CharGenDialog(QDialog):
                 "Generation complete. Save as PNG (with portrait) or JSON.",
                 COLOR_STATUS_RUNNING,
             )
-        else:
+        elif raw:
             self.edit_output.setPlainText(raw)
             self._set_status(
                 "Could not parse JSON — raw output shown. Try regenerating or edit manually.",
+                COLOR_STATUS_ERROR,
+            )
+        else:
+            self.edit_output.setPlainText("")
+            self._set_status(
+                "No content returned — model may have refused or been rate-limited.",
                 COLOR_STATUS_ERROR,
             )
 
