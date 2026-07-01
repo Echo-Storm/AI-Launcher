@@ -6,13 +6,13 @@ import os
 import re
 
 from PyQt6.QtCore    import Qt, QThread, pyqtSignal
-from PyQt6.QtGui     import QFont, QPixmap
+from PyQt6.QtGui     import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox, QDialog, QVBoxLayout, QHBoxLayout,
+    QCheckBox, QComboBox, QDialog, QVBoxLayout, QHBoxLayout,
     QFrame, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QSlider, QTabWidget, QWidget, QFileDialog, QMessageBox,
-    QScrollArea,
+    QSlider, QStyle, QStyleOptionSlider, QTabWidget, QWidget,
+    QFileDialog, QMessageBox, QScrollArea,
 )
 
 from constants import (
@@ -21,6 +21,7 @@ from constants import (
     COLOR_BUTTON_BG, COLOR_BUTTON_HOVER,
     COLOR_STATUS_ERROR, COLOR_STATUS_RUNNING, COLOR_STATUS_STARTING,
     FONT_UI_FAMILY, FONT_UI_SIZE, FONT_LOG_FAMILY, FONT_LOG_SIZE,
+    API_BASE_URL, API_KEY, API_MODEL,
 )
 
 # ---------------------------------------------------------------------------
@@ -155,28 +156,40 @@ class _GenerateWorker(QThread):
     finished = pyqtSignal(str)
     error    = pyqtSignal(str)
 
-    def __init__(self, api_base: str, messages: list, temperature: float, parent=None):
+    def __init__(self, api_base: str, messages: list, temperature: float,
+                 api_key: str = "", model: str = "", parent=None):
         super().__init__(parent)
         self._api_base    = api_base
         self._messages    = messages
         self._temperature = temperature
+        self._api_key     = api_key
+        self._model       = model
 
     def run(self):
         import urllib.request
         import urllib.error
 
-        payload = json.dumps({
+        payload_dict = {
             "messages":    self._messages,
-            "max_tokens":  6144,
+            "max_tokens":  8192,
             "temperature": self._temperature,
             "stream":      False,
-        }).encode()
+        }
+        if self._model:
+            payload_dict["model"] = self._model
+
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent":   "python-requests/2.31.0",
+        }
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
 
         try:
             req = urllib.request.Request(
                 f"{self._api_base}/v1/chat/completions",
-                data=payload,
-                headers={"Content-Type": "application/json"},
+                data=json.dumps(payload_dict).encode(),
+                headers=headers,
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=120) as resp:
@@ -184,13 +197,57 @@ class _GenerateWorker(QThread):
                 text = data["choices"][0]["message"]["content"]
                 self.finished.emit(text)
         except urllib.error.HTTPError as e:
-            self.error.emit(f"API error {e.code} {e.reason}")
+            if e.code == 401:
+                self.error.emit("API error 401 — invalid API key.")
+            else:
+                self.error.emit(f"API error {e.code}: {e.reason}")
         except urllib.error.URLError as e:
-            self.error.emit(f"Connection failed — is KoboldCpp running? ({e.reason})")
+            if self._api_key:
+                self.error.emit(f"Connection failed — check URL and API key. ({e.reason})")
+            else:
+                self.error.emit(f"Connection failed — is KoboldCpp running? ({e.reason})")
         except (KeyError, IndexError):
             self.error.emit("Unexpected API response format.")
         except Exception as e:
             self.error.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Custom slider — draws a "Std" reference notch at value 75 (0.75)
+# ---------------------------------------------------------------------------
+
+class _TempSlider(QSlider):
+    _MARKER = 75
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt,
+            QStyle.SubControl.SC_SliderGroove, self,
+        )
+        px = QStyle.sliderPositionFromValue(
+            self.minimum(), self.maximum(), self._MARKER,
+            groove.width(), False,
+        ) + groove.x()
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        pen = QPen(QColor(COLOR_TEXT_MUTED))
+        pen.setWidth(1)
+        p.setPen(pen)
+        tick_y = groove.bottom() + 3
+        p.drawLine(px, tick_y, px, tick_y + 5)
+
+        p.setFont(QFont(FONT_UI_FAMILY, 6))
+        fm = p.fontMetrics()
+        label = "Std"
+        tw = fm.horizontalAdvance(label)
+        p.setPen(QColor(COLOR_TEXT_MUTED))
+        p.drawText(px - tw // 2, tick_y + 15, label)
+        p.end()
 
 
 # ---------------------------------------------------------------------------
@@ -356,11 +413,12 @@ class CharGenDialog(QDialog):
         self.resize(740, 680)
         self.setStyleSheet(_STYLE)
 
-        self._api_base      = api_base
-        self._output_dir    = output_dir
-        self._worker        = None
-        self._last_card     = None
-        self._portrait_path = None
+        self._api_base          = api_base
+        self._output_dir        = output_dir
+        self._worker            = None
+        self._last_card         = None
+        self._portrait_path     = None
+        self._current_api_model = API_MODEL
 
         self._build_ui()
 
@@ -393,6 +451,22 @@ class CharGenDialog(QDialog):
         form_vbox.addWidget(_lbl_section("Generation Settings"))
         form_vbox.addSpacing(4)
 
+        # Backend selector — only visible when API is configured in config.json
+        if API_BASE_URL:
+            backend_row = QHBoxLayout()
+            backend_row.setSpacing(8)
+            backend_row.addWidget(_lbl("Backend"))
+            self._combo_backend = QComboBox()
+            self._combo_backend.setFixedHeight(24)
+            self._combo_backend.addItem("Local  (KoboldCpp)", userData="local")
+            api_label = f"API  —  {API_MODEL}" if API_MODEL else "API  (remote)"
+            self._combo_backend.addItem(api_label, userData="api")
+            backend_row.addWidget(self._combo_backend, 1)
+            form_vbox.addLayout(backend_row)
+            form_vbox.addSpacing(6)
+        else:
+            self._combo_backend = None
+
         # Temperature slider
         temp_row = QHBoxLayout()
         temp_row.setSpacing(6)
@@ -401,7 +475,7 @@ class CharGenDialog(QDialog):
         lbl_safe = QLabel("Safe")
         lbl_safe.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 7pt;")
         temp_row.addWidget(lbl_safe)
-        self._slider_temp = QSlider(Qt.Orientation.Horizontal)
+        self._slider_temp = _TempSlider(Qt.Orientation.Horizontal)
         self._slider_temp.setRange(60, 120)
         self._slider_temp.setValue(85)
         self._slider_temp.setTickInterval(10)
@@ -619,6 +693,11 @@ class CharGenDialog(QDialog):
 
     def set_model_hint(self, model_key: str | None):
         """Called by MainWindow each time the dialog is shown."""
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            if self._last_card is None:
+                self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
+            return
         if model_key and model_key != "chargen":
             self._set_status(
                 "Note: general model loaded — CharGen model gives better card results.",
@@ -626,6 +705,15 @@ class CharGenDialog(QDialog):
             )
         elif self._last_card is None:
             self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
+
+    def set_api_model(self, model: str):
+        """Called by MainWindow when the API model selection changes."""
+        self._current_api_model = model
+        if self._combo_backend:
+            idx = self._combo_backend.findData("api")
+            if idx >= 0:
+                label = f"API  —  {model}" if model else "API  (remote)"
+                self._combo_backend.setItemText(idx, label)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -747,13 +835,26 @@ class CharGenDialog(QDialog):
 
         temperature = self._slider_temp.value() / 100.0
 
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            api_base = API_BASE_URL
+            api_key  = API_KEY
+            model    = self._current_api_model
+        else:
+            api_base = self._api_base
+            api_key  = ""
+            model    = ""
+
         self.btn_generate.setEnabled(False)
         self.btn_copy.setEnabled(False)
         self.btn_save_json.setEnabled(False)
         self.btn_save_png.setEnabled(False)
         self._set_status("Generating… this may take a minute.", COLOR_STATUS_STARTING)
 
-        self._worker = _GenerateWorker(self._api_base, messages, temperature, self)
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, parent=self,
+        )
         self._worker.finished.connect(self._on_done)
         self._worker.error.connect(self._on_error)
         self._worker.start()

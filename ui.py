@@ -1,10 +1,11 @@
 # ui.py — AI Writing Tools Launcher
 
+import json
 import os
 import webbrowser
 import logging
 
-from PyQt6.QtCore    import Qt, QProcess
+from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
@@ -50,6 +51,7 @@ class StatusBadge(QWidget):
     def set_starting(self): self._apply(COLOR_STATUS_STARTING, "Starting…")
     def set_running(self):  self._apply(COLOR_STATUS_RUNNING,  "Running")
     def set_error(self):    self._apply(COLOR_STATUS_ERROR,    "Error")
+    def set_text(self, color: str, text: str): self._apply(color, text)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +132,143 @@ class ServiceCard(QFrame):
 
         btn_row.addStretch()
         outer.addLayout(btn_row)
+
+
+# ---------------------------------------------------------------------------
+# API test worker
+# ---------------------------------------------------------------------------
+
+class _ApiTestWorker(QThread):
+    success = pyqtSignal(str, list)   # (status_msg, [model_id, ...])
+    error   = pyqtSignal(str)
+
+    def run(self):
+        import urllib.request
+        import urllib.error
+
+        headers = {"User-Agent": "python-requests/2.31.0"}
+        if API_KEY:
+            headers["Authorization"] = f"Bearer {API_KEY}"
+
+        # Try /v1/models — fast, free, widely supported
+        try:
+            req = urllib.request.Request(f"{API_BASE_URL}/v1/models", headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                model_ids = [m["id"] for m in data.get("data", [])]
+                msg = f"{len(model_ids)} models available" if model_ids else "Connected"
+                self.success.emit(msg, model_ids)
+                return
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                self.error.emit("Invalid API key (401)")
+                return
+        except urllib.error.URLError as e:
+            self.error.emit(f"Cannot reach endpoint ({e.reason})")
+            return
+        except Exception:
+            pass
+
+        # Fallback: 1-token completion ping
+        payload = json.dumps({
+            **({"model": API_MODEL} if API_MODEL else {}),
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+            "stream": False,
+        }).encode()
+        try:
+            req = urllib.request.Request(
+                f"{API_BASE_URL}/v1/chat/completions",
+                data=payload,
+                headers={**headers, "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as _:
+                self.success.emit("Connected", [])
+        except urllib.error.HTTPError as e:
+            self.error.emit(f"HTTP {e.code}: {e.reason}")
+        except urllib.error.URLError as e:
+            self.error.emit(f"Cannot reach endpoint ({e.reason})")
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+# API card — compact, no process controls
+# ---------------------------------------------------------------------------
+
+class ApiCard(QFrame):
+    model_changed = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ServiceCard")
+        self._worker = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 10, 14, 10)
+        outer.setSpacing(6)
+
+        title_lbl = QLabel("API Backend  ·  Remote Models")
+        title_lbl.setFont(QFont(FONT_UI_FAMILY, 10, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color: {COLOR_ACCENT};")
+        outer.addWidget(title_lbl)
+
+        url_text = API_BASE_URL if API_BASE_URL else "Not configured — add \"api\" block to config.json"
+        url_lbl = QLabel(url_text)
+        url_lbl.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE - 1))
+        url_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        outer.addWidget(url_lbl)
+
+        # Model selector — hidden until Activate populates it
+        self.model_combo = QComboBox()
+        self.model_combo.setFixedHeight(24)
+        self.model_combo.setVisible(False)
+        if API_MODEL:
+            self.model_combo.addItem(API_MODEL, userData=API_MODEL)
+        self.model_combo.currentIndexChanged.connect(self._on_model_changed)
+        outer.addWidget(self.model_combo)
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.status = StatusBadge()
+        if not API_BASE_URL:
+            self.status.set_text(COLOR_STATUS_STOPPED, "Not configured")
+        else:
+            self.status.set_text(COLOR_STATUS_STARTING, "Not activated")
+        row.addWidget(self.status)
+        row.addStretch()
+        self.btn_activate = QPushButton("Activate")
+        self.btn_activate.setFixedHeight(26)
+        self.btn_activate.setEnabled(bool(API_BASE_URL))
+        self.btn_activate.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
+        row.addWidget(self.btn_activate)
+        outer.addLayout(row)
+
+    def populate_models(self, model_ids: list):
+        self.model_combo.blockSignals(True)
+        current = self.current_model
+        self.model_combo.clear()
+        for mid in sorted(model_ids):
+            self.model_combo.addItem(mid, userData=mid)
+        # Restore previous selection or prefer configured default
+        prefer = current or API_MODEL
+        idx = self.model_combo.findData(prefer)
+        if idx >= 0:
+            self.model_combo.setCurrentIndex(idx)
+        self.model_combo.blockSignals(False)
+        self.model_combo.setVisible(bool(model_ids))
+        if model_ids:
+            self.model_changed.emit(self.current_model)
+
+    @property
+    def current_model(self) -> str:
+        if self.model_combo.isVisible() and self.model_combo.count():
+            return self.model_combo.currentData() or self.model_combo.currentText()
+        return API_MODEL
+
+    def _on_model_changed(self):
+        self.model_changed.emit(self.current_model)
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +364,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(580, 500)
-        self.resize(660, 580)
+        self.setMinimumSize(580, 580)
+        self.resize(660, 700)
         self.setStyleSheet(STYLESHEET)
 
         self._kobold_proc           = None
@@ -301,10 +440,12 @@ class MainWindow(QMainWindow):
             has_chargen_btn=True,
             model_items=[(m["name"], m.get("key", "")) for m in MODELS],
         )
-        self.st_card = ServiceCard("SillyTavern  ·  Writing Interface", has_open_btn=True)
+        self.st_card  = ServiceCard("SillyTavern  ·  Writing Interface", has_open_btn=True)
+        self.api_card = ApiCard()
 
         cards_layout.addWidget(self.kobold_card)
         cards_layout.addWidget(self.st_card)
+        cards_layout.addWidget(self.api_card)
 
         # Global controls row
         global_row = QHBoxLayout()
@@ -350,7 +491,7 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.log)
 
         splitter.addWidget(log_pane)
-        splitter.setSizes([280, 200])
+        splitter.setSizes([400, 200])
 
         content_layout.addWidget(splitter)
         vbox.addWidget(content)
@@ -364,6 +505,8 @@ class MainWindow(QMainWindow):
         self.st_card.btn_open.clicked.connect(self._open_st)
         self.btn_start_all.clicked.connect(self._start_all)
         self.btn_stop_all.clicked.connect(self._stop_all)
+        self.api_card.btn_activate.clicked.connect(self._activate_api)
+        self.api_card.model_changed.connect(self._on_api_model_changed)
 
     # ------------------------------------------------------------------
     # Logging helpers
@@ -617,6 +760,37 @@ class MainWindow(QMainWindow):
         self._chargen_dlg.activateWindow()
 
     # ------------------------------------------------------------------
+    # API backend test
+    # ------------------------------------------------------------------
+
+    def _activate_api(self):
+        if self.api_card._worker and self.api_card._worker.isRunning():
+            return
+        self.api_card.btn_activate.setEnabled(False)
+        self.api_card.status.set_text(COLOR_STATUS_STARTING, "Connecting…")
+        w = _ApiTestWorker(self)
+        w.success.connect(self._on_api_test_ok)
+        w.error.connect(self._on_api_test_error)
+        w.finished.connect(lambda: self.api_card.btn_activate.setEnabled(True))
+        self.api_card._worker = w
+        w.start()
+
+    def _on_api_test_ok(self, msg: str, models: list):
+        self.api_card.status.set_text(COLOR_STATUS_RUNNING, msg)
+        self._log(f"[API] {msg}", COLOR_STATUS_RUNNING)
+        if models:
+            self.api_card.populate_models(models)
+
+    def _on_api_test_error(self, msg: str):
+        self.api_card.status.set_text(COLOR_STATUS_ERROR, msg)
+        self._log(f"[API] Error: {msg}", COLOR_STATUS_ERROR)
+
+    def _on_api_model_changed(self, model: str):
+        self._log(f"[API] Active model: {model}", COLOR_TEXT_MUTED)
+        if self._chargen_dlg is not None:
+            self._chargen_dlg.set_api_model(model)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -637,6 +811,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._chargen_dlg is not None:
             self._chargen_dlg.close()
+        if self.api_card._worker and self.api_card._worker.isRunning():
+            self.api_card._worker.quit()
+            self.api_card._worker.wait(1000)
         self._stop_kobold()
         self._stop_st()
         event.accept()
