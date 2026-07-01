@@ -33,18 +33,6 @@ _BASE = (
     "Generate a complete, detailed character card as a single valid JSON object "
 )
 
-_FIELDS = (
-    "with these exact fields: name, description, personality, scenario, first_mes. "
-    "The first_mes field should be the character's opening message (1-2 paragraphs). "
-)
-
-_FIELDS_EX = (
-    "with these exact fields: name, description, personality, scenario, first_mes, mes_example. "
-    "The first_mes field should be the character's opening message (1-2 paragraphs). "
-    r"The mes_example field must contain exactly ONE example exchange using "
-    r"<START>\n{{user}}: ...\n{{char}}: ... format — keep each side to 2-3 sentences. "
-)
-
 _DISTINCTIVE = (
     "Prioritize genuine originality: avoid overused archetypes and clichés. "
     "Give the character internal contradictions, specific idiosyncrasies, a distinct speech "
@@ -55,10 +43,37 @@ _OUTPUT = (
     "Output ONLY the raw JSON object — no markdown fences, no commentary, no preamble."
 )
 
-_SYS_NORMAL    = _BASE + _FIELDS    +               _OUTPUT
-_SYS_NORMAL_EX = _BASE + _FIELDS_EX +               _OUTPUT
-_SYS_DIST      = _BASE + _FIELDS    + _DISTINCTIVE + _OUTPUT
-_SYS_DIST_EX   = _BASE + _FIELDS_EX + _DISTINCTIVE + _OUTPUT
+
+def _build_system_prompt(
+    distinctive: bool = False,
+    scenario: bool = True,
+    first_mes: bool = True,
+    mes_example: bool = False,
+) -> str:
+    fields = ["name", "description", "personality"]
+    if scenario:
+        fields.append("scenario")
+    if first_mes:
+        fields.append("first_mes")
+    if mes_example:
+        fields.append("mes_example")
+
+    notes = []
+    if first_mes:
+        notes.append("The first_mes field should be the character's opening message (1-2 paragraphs). ")
+    if mes_example:
+        notes.append(
+            r"The mes_example field must contain exactly ONE example exchange using "
+            r"<START>\n{{user}}: ...\n{{char}}: ... format — keep each side to 2-3 sentences. "
+        )
+
+    return (
+        _BASE
+        + "with these exact fields: " + ", ".join(fields) + ". "
+        + "".join(notes)
+        + (_DISTINCTIVE if distinctive else "")
+        + _OUTPUT
+    )
 
 
 def _build_user_prompt(fields: dict) -> str:
@@ -610,6 +625,22 @@ class CharGenDialog(QDialog):
         self.edit_output.setPlaceholderText("Generated output will appear here…")
         out_vbox.addWidget(self.edit_output, 1)
 
+        # Expand personality row
+        expand_row = QHBoxLayout()
+        expand_row.setSpacing(6)
+        expand_row.addWidget(_lbl("Must include:"))
+        self._edit_must_include = QLineEdit()
+        self._edit_must_include.setPlaceholderText(
+            "traits, quirks, or details the personality must mention (optional)"
+        )
+        expand_row.addWidget(self._edit_must_include, 1)
+        self._btn_expand = QPushButton("Expand Personality")
+        self._btn_expand.setFixedHeight(26)
+        self._btn_expand.setEnabled(False)
+        self._btn_expand.clicked.connect(self._expand_personality)
+        expand_row.addWidget(self._btn_expand)
+        out_vbox.addLayout(expand_row)
+
         # Portrait row
         portrait_row = QHBoxLayout()
         portrait_row.setSpacing(10)
@@ -749,7 +780,8 @@ class CharGenDialog(QDialog):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-            self._worker.setParent(None)
+            self._worker.terminate()
+            self._worker.wait(2000)
             self._set_status("Generation cancelled.", COLOR_TEXT_MUTED)
             self.btn_generate.setEnabled(True)
         self._worker = None
@@ -827,24 +859,24 @@ class CharGenDialog(QDialog):
             self.edit_concept.setFocus()
             return
 
+        use_scenario    = self.chk_scenario.isChecked()
+        use_first_mes   = self.chk_first_mes.isChecked()
         use_examples    = self.chk_mes_example.isChecked()
         use_distinctive = self.chk_distinctive.isChecked()
 
-        if use_distinctive and use_examples:
-            system = _SYS_DIST_EX
-        elif use_distinctive:
-            system = _SYS_DIST
-        elif use_examples:
-            system = _SYS_NORMAL_EX
-        else:
-            system = _SYS_NORMAL
+        system = _build_system_prompt(
+            distinctive=use_distinctive,
+            scenario=use_scenario,
+            first_mes=use_first_mes,
+            mes_example=use_examples,
+        )
 
         fields = {
             "name":        self.edit_name.text().strip(),
             "concept":     concept,
             "personality": self.edit_personality.toPlainText().strip(),
-            "scenario":    self.edit_scenario.toPlainText().strip() if self.chk_scenario.isChecked() else "",
-            "first_mes":   self.edit_first_mes.toPlainText().strip() if self.chk_first_mes.isChecked() else "",
+            "scenario":    self.edit_scenario.toPlainText().strip() if use_scenario else "",
+            "first_mes":   self.edit_first_mes.toPlainText().strip() if use_first_mes else "",
             "mes_example": self.edit_mes_example.toPlainText().strip() if use_examples else "",
         }
 
@@ -869,6 +901,7 @@ class CharGenDialog(QDialog):
         self.btn_copy.setEnabled(False)
         self.btn_save_json.setEnabled(False)
         self.btn_save_png.setEnabled(False)
+        self._btn_expand.setEnabled(False)
         self._set_status("Generating… this may take a minute.", COLOR_STATUS_STARTING)
 
         self._worker = _GenerateWorker(
@@ -888,6 +921,7 @@ class CharGenDialog(QDialog):
             self.edit_output.setPlainText(pretty)
             self.btn_save_json.setEnabled(True)
             self.btn_save_png.setEnabled(True)
+            self._btn_expand.setEnabled(True)
             self._set_status(
                 "Generation complete. Save as PNG (with portrait) or JSON.",
                 COLOR_STATUS_RUNNING,
@@ -905,13 +939,75 @@ class CharGenDialog(QDialog):
                 COLOR_STATUS_ERROR,
             )
 
-        self.btn_copy.setEnabled(True)   # always allow copying the raw output
+        self.btn_copy.setEnabled(bool(self._last_card or raw))
         self._tabs.setCurrentIndex(1)
         self.btn_generate.setEnabled(True)
 
     def _on_error(self, msg: str):
         self._worker = None
         self._set_status(f"Error: {msg}", COLOR_STATUS_ERROR)
+        self.btn_generate.setEnabled(True)
+        self._btn_expand.setEnabled(self._last_card is not None)
+
+    def _expand_personality(self):
+        if not self._last_card:
+            return
+
+        must_include = self._edit_must_include.text().strip()
+        user_content = (
+            f"Character card:\n{json.dumps(self._last_card, indent=2, ensure_ascii=False)}\n\n"
+            "Rewrite the personality field to be significantly more detailed — aim for 3-5 "
+            "substantial paragraphs. Cover: speech register and vocabulary, specific behavioral "
+            "mannerisms, emotional tendencies and triggers, internal contradictions, and how "
+            "they present themselves in conversation."
+        )
+        if must_include:
+            user_content += (
+                f"\n\nThese specific elements must be present in the personality: {must_include}"
+            )
+
+        messages = [
+            {"role": "system", "content": (
+                "You are a character card editor. Expand the personality field of the provided "
+                "SillyTavern character card to be detailed and vivid. "
+                "Return only the new personality text — no JSON, no field labels, no explanation."
+            )},
+            {"role": "user", "content": user_content},
+        ]
+
+        temperature = self._slider_temp.value() / 100.0
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
+        else:
+            api_base, api_key, model = self._api_base, "", ""
+
+        self._btn_expand.setEnabled(False)
+        self.btn_generate.setEnabled(False)
+        self._set_status("Expanding personality…", COLOR_STATUS_STARTING)
+
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, parent=self,
+        )
+        self._worker.finished.connect(self._on_expand_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _on_expand_done(self, raw: str):
+        self._worker = None
+        raw = raw.strip()
+        if not raw:
+            self._set_status("No content returned — try again.", COLOR_STATUS_ERROR)
+            self._btn_expand.setEnabled(True)
+            self.btn_generate.setEnabled(True)
+            return
+        self._last_card["personality"] = raw
+        self.edit_output.setPlainText(
+            json.dumps(self._last_card, indent=2, ensure_ascii=False)
+        )
+        self._set_status("Personality expanded.", COLOR_STATUS_RUNNING)
+        self._btn_expand.setEnabled(True)
         self.btn_generate.setEnabled(True)
 
     # ------------------------------------------------------------------

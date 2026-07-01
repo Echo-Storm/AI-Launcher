@@ -653,7 +653,12 @@ class MainWindow(QMainWindow):
         self.chargen_via_lbl.setStyleSheet(style)
 
         backend_ready = self._api_ready or self._kobold_ready
-        if backend_ready and not self._st_ready:
+        self.btn_chargen.setEnabled(backend_ready)
+        # Only touch Start when ST is not mid-launch (otherwise we'd re-enable it while starting)
+        st_idle = not self._st_proc or self._st_proc.state() == QProcess.ProcessState.NotRunning
+        if st_idle:
+            self.btn_st_start.setEnabled(backend_ready)
+        if backend_ready and not self._st_ready and st_idle:
             self.btn_st_start.setStyleSheet(_BTN_ST_START_READY)
         else:
             self.btn_st_start.setStyleSheet("")
@@ -847,7 +852,6 @@ class MainWindow(QMainWindow):
         else:
             self.st_status.set_error()
         self._st_stopping = False
-        self.btn_st_start.setEnabled(True)
         self.btn_st_stop.setEnabled(False)
         self.btn_st_open.setEnabled(False)
         self._log_st(f"Exited (code {exit_code})")
