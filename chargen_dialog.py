@@ -21,8 +21,9 @@ from constants import (
     COLOR_BUTTON_BG, COLOR_BUTTON_HOVER,
     COLOR_STATUS_ERROR, COLOR_STATUS_RUNNING, COLOR_STATUS_STARTING,
     FONT_UI_FAMILY, FONT_UI_SIZE, FONT_LOG_FAMILY, FONT_LOG_SIZE,
-    API_BASE_URL, API_KEY, API_MODEL,
+    API_BASE_URL, API_KEY, API_MODEL, SDXL_MODEL_PATH,
 )
+from imagegen_dialog import ImageGenWorker
 
 # ---------------------------------------------------------------------------
 # Prompt templates — 4 composable variants
@@ -113,6 +114,66 @@ _REGENERATE_CONFIG = {
         "produce. Aim for 2-3 paragraphs.",
     ),
 }
+
+# ---------------------------------------------------------------------------
+# Condense-field configuration — tightens an existing field instead of adding
+# to it (Expand) or replacing it wholesale (Regenerate). Word targets below
+# double as the green/yellow/red thresholds for the live word-count label —
+# "yellow" means "past what Condense would consider Medium", "red" means
+# "past what Condense would even consider Long".
+# ---------------------------------------------------------------------------
+
+_FIELD_LENGTH_TARGETS = {
+    "personality": {"short": 100, "medium": 200, "long": 350},
+    "scenario":    {"short": 80,  "medium": 150, "long": 275},
+    "first_mes":   {"short": 80,  "medium": 150, "long": 250},
+}
+
+_CONDENSE_CONFIG = {
+    "personality": (
+        "You are a character card editor. Condense the personality field of the provided "
+        "SillyTavern character card — cut filler, repetition, and redundant descriptors "
+        "while preserving every distinct trait and detail. Return only the condensed "
+        "personality text — no JSON, no field labels, no explanation.",
+        "Rewrite the personality field to be significantly tighter, aiming for "
+        "approximately {target} words. Keep every distinct trait, mannerism, and voice "
+        "detail — cut repeated ideas, throat-clearing, and vague filler phrases instead "
+        "of removing substance.",
+    ),
+    "scenario": (
+        "You are a character card editor. Condense the scenario field of the provided "
+        "SillyTavern character card — cut filler and repetition while preserving the "
+        "essential setting and circumstances. Return only the condensed scenario text — "
+        "no JSON, no field labels, no explanation.",
+        "Rewrite the scenario field to be significantly tighter, aiming for approximately "
+        "{target} words. Keep the essential setting, circumstances, and atmosphere — cut "
+        "redundant scene-setting and filler description.",
+    ),
+    "first_mes": (
+        "You are a character card editor. Condense the first_mes field of the provided "
+        "SillyTavern character card — cut filler and repetition while preserving the "
+        "character's voice and the opening hook. Return only the condensed first message "
+        "text — no JSON, no field labels, no explanation.",
+        "Rewrite the first_mes field to be significantly tighter, aiming for approximately "
+        "{target} words. Keep the character's voice and the opening hook — cut redundant "
+        "description and filler dialogue.",
+    ),
+}
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _wordcount_color(field_key: str, count: int) -> str:
+    targets = _FIELD_LENGTH_TARGETS.get(field_key)
+    if not targets:
+        return COLOR_TEXT_MUTED
+    if count <= targets["medium"]:
+        return COLOR_STATUS_RUNNING
+    if count <= targets["long"]:
+        return COLOR_STATUS_STARTING
+    return COLOR_STATUS_ERROR
 
 
 def _build_system_prompt(
@@ -763,6 +824,32 @@ class CharGenDialog(QDialog):
         expand_row.addWidget(self._btn_regenerate)
         out_vbox.addLayout(expand_row)
 
+        # Word count / Condense row
+        condense_row = QHBoxLayout()
+        condense_row.setSpacing(6)
+        self._lbl_wordcount = QLabel("")
+        self._lbl_wordcount.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        condense_row.addWidget(self._lbl_wordcount)
+        condense_row.addStretch()
+        condense_row.addWidget(_lbl("Length:"))
+        self._condense_length = QComboBox()
+        self._condense_length.setFixedHeight(24)
+        self._condense_length.setFixedWidth(90)
+        self._condense_length.addItem("Short",  userData="short")
+        self._condense_length.addItem("Medium", userData="medium")
+        self._condense_length.addItem("Long",   userData="long")
+        self._condense_length.setCurrentIndex(1)
+        condense_row.addWidget(self._condense_length)
+        self._btn_condense = QPushButton("Condense")
+        self._btn_condense.setFixedHeight(26)
+        self._btn_condense.setEnabled(False)
+        self._btn_condense.setToolTip("Tighten the current field to the selected target length, keeping its substance.")
+        self._btn_condense.clicked.connect(self._condense_field)
+        condense_row.addWidget(self._btn_condense)
+        out_vbox.addLayout(condense_row)
+
+        self._expand_combo.currentIndexChanged.connect(self._update_field_wordcount)
+
         # Portrait prompt row
         pp_row = QHBoxLayout()
         self._btn_portrait_prompt = QPushButton("Portrait Prompt")
@@ -939,12 +1026,14 @@ class CharGenDialog(QDialog):
 
     def _set_busy(self, busy: bool):
         """Central button-state switch for any in-flight worker (generate/expand/
-        portrait prompt). Keeps btn_generate, _btn_expand, _btn_portrait_prompt, and
-        btn_cancel in sync so no completion path can leave one out of step."""
+        condense/portrait prompt). Keeps btn_generate, _btn_expand, _btn_regenerate,
+        _btn_condense, _btn_portrait_prompt, and btn_cancel in sync so no completion
+        path can leave one out of step."""
         has_card = self._last_card is not None
         self.btn_generate.setEnabled(not busy)
         self._btn_expand.setEnabled(has_card and not busy)
         self._btn_regenerate.setEnabled(has_card and not busy)
+        self._btn_condense.setEnabled(has_card and not busy)
         self._btn_portrait_prompt.setEnabled(has_card and not busy)
         self.btn_cancel.setEnabled(busy)
         self.btn_cancel.setVisible(busy)
@@ -952,6 +1041,20 @@ class CharGenDialog(QDialog):
     def _set_status(self, text: str, color: str = COLOR_TEXT_MUTED):
         self._lbl_status.setText(text)
         self._lbl_status.setStyleSheet(f"color: {color}; font-size: 8pt;")
+
+    def _update_field_wordcount(self):
+        """Live word count for whichever field is selected in the Expand/Condense
+        combo — colored green/yellow/red against _FIELD_LENGTH_TARGETS so it's
+        obvious at a glance when a field has ballooned past a reasonable length."""
+        if not self._last_card:
+            self._lbl_wordcount.setText("")
+            return
+        field_key = self._expand_combo.currentData()
+        text = self._last_card.get(field_key, "") or ""
+        count = _word_count(text)
+        color = _wordcount_color(field_key, count)
+        self._lbl_wordcount.setText(f"{count} words")
+        self._lbl_wordcount.setStyleSheet(f"color: {color}; font-size: 8pt; font-weight: bold;")
 
     def _safe_name(self) -> str:
         name = (self._last_card or {}).get("name") or self.edit_name.text().strip() or "Unknown"
@@ -1097,6 +1200,7 @@ class CharGenDialog(QDialog):
             )
 
         self.btn_copy.setEnabled(bool(self._last_card or raw))
+        self._update_field_wordcount()
         self._tabs.setCurrentIndex(1)
         self._set_busy(False)
 
@@ -1196,6 +1300,56 @@ class CharGenDialog(QDialog):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
+    def _condense_field(self):
+        """Tighten the current field to the selected target length instead of
+        elaborating (Expand) or replacing it wholesale (Regenerate) — same
+        full-card-context shape as _expand_field since condensing benefits from
+        the rest of the card for keeping voice/detail consistent."""
+        if not self._last_card:
+            return
+
+        field_key = self._expand_combo.currentData()
+        length_key = self._condense_length.currentData()
+        sys_prompt, user_template = _CONDENSE_CONFIG[field_key]
+        target = _FIELD_LENGTH_TARGETS[field_key][length_key]
+        user_instruction = user_template.format(target=target)
+        must_include = self._edit_must_include.text().strip()
+
+        user_content = (
+            f"Character card:\n{json.dumps(self._last_card, indent=2, ensure_ascii=False)}\n\n"
+            + user_instruction
+        )
+        if must_include:
+            user_content += f"\n\nThese specific elements must be present: {must_include}"
+
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": user_content},
+        ]
+
+        temperature = self._slider_temp.value() / 100.0
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
+        else:
+            api_base, api_key, model = self._api_base, "", ""
+
+        self._expanding_field = field_key
+        self._expanding_verb  = "condensed"
+        self._set_busy(True)
+        self._set_status(
+            f"Condensing {self._expand_combo.currentText().lower()} (~{target} words)…",
+            COLOR_STATUS_STARTING,
+        )
+
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, parent=self,
+        )
+        self._worker.finished.connect(self._on_expand_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
     def _on_expand_done(self, raw: str):
         self._worker = None
         raw = raw.strip()
@@ -1209,6 +1363,7 @@ class CharGenDialog(QDialog):
         )
         label = self._expand_combo.currentText()
         self._set_status(f"{label} {self._expanding_verb}.", COLOR_STATUS_RUNNING)
+        self._update_field_wordcount()
         self._set_busy(False)
 
     def _get_portrait_prompt(self):
@@ -1284,6 +1439,123 @@ class CharGenDialog(QDialog):
         edit.setMinimumHeight(120)
         vbox.addWidget(edit)
 
+        # -- Generate Image, using this app's own in-process Image Gen backend --
+
+        gen_state = {"worker": None, "image_path": None}
+
+        gen_status = QLabel(
+            "" if SDXL_MODEL_PATH else
+            "Image Gen isn't configured — set a checkpoint in Settings first."
+        )
+        gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        gen_status.setWordWrap(True)
+        vbox.addWidget(gen_status)
+
+        gen_preview = QLabel()
+        gen_preview.setFixedSize(220, 220)
+        gen_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gen_preview.setStyleSheet(_PORTRAIT_PLACEHOLDER_STYLE)
+        gen_preview.setVisible(False)
+        vbox.addWidget(gen_preview, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        btn_generate_image = QPushButton("Generate Image")
+        btn_generate_image.setFixedHeight(26)
+        btn_generate_image.setEnabled(bool(SDXL_MODEL_PATH))
+        btn_cancel_gen = QPushButton("Cancel")
+        btn_cancel_gen.setFixedHeight(26)
+        btn_cancel_gen.setVisible(False)
+        btn_use_portrait = QPushButton("Use as Portrait")
+        btn_use_portrait.setFixedHeight(26)
+        btn_use_portrait.setEnabled(False)
+
+        def set_gen_busy(busy: bool):
+            btn_generate_image.setEnabled(not busy and bool(SDXL_MODEL_PATH))
+            btn_cancel_gen.setVisible(busy)
+            btn_cancel_gen.setEnabled(busy)
+            edit.setEnabled(not busy)
+
+        def on_gen_progress(text: str):
+            gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+            gen_status.setText(text)
+
+        def on_gen_done(path: str):
+            gen_state["image_path"] = path
+            gen_preview.setPixmap(QPixmap(path).scaled(
+                220, 220, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
+            ))
+            gen_preview.setVisible(True)
+            gen_status.setStyleSheet(f"color: {COLOR_STATUS_RUNNING}; font-size: 8pt;")
+            gen_status.setText("Done.")
+            set_gen_busy(False)
+            btn_use_portrait.setEnabled(True)
+            gen_state["worker"] = None
+
+        def on_gen_error(message: str):
+            gen_status.setStyleSheet(f"color: {COLOR_STATUS_ERROR}; font-size: 8pt;")
+            gen_status.setText(f"Error: {message}")
+            set_gen_busy(False)
+            gen_state["worker"] = None
+
+        def on_gen_cancelled():
+            gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+            gen_status.setText("Cancelled.")
+            set_gen_busy(False)
+            gen_state["worker"] = None
+
+        def start_generate():
+            if gen_state["worker"] is not None:
+                return
+            prompt = edit.toPlainText().strip()
+            if not prompt:
+                return
+            set_gen_busy(True)
+            gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+            gen_status.setText("Starting...")
+            # Parented to self (the persistent CharGenDialog), not dlg — dlg
+            # is WA_DeleteOnClose and transient, so a worker parented to it
+            # would risk Qt destroying a still-running QThread if the popup
+            # is closed mid-generation.
+            worker = ImageGenWorker(prompt, parent=self)
+            worker.progress.connect(on_gen_progress)
+            worker.finished.connect(on_gen_done)
+            worker.error.connect(on_gen_error)
+            worker.cancelled.connect(on_gen_cancelled)
+            gen_state["worker"] = worker
+            worker.start()
+
+        def cancel_generate():
+            if gen_state["worker"] is not None:
+                gen_status.setText("Cancelling...")
+                gen_state["worker"].request_cancel()
+
+        def use_as_portrait():
+            path = gen_state["image_path"]
+            if not path:
+                return
+            px = QPixmap(path)
+            if px.isNull():
+                return
+            self._portrait_path = path
+            self._portrait_preview.setPixmap(
+                px.scaled(96, 96,
+                          Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+            )
+            self._portrait_preview.setText("")
+            self._btn_clear_portrait.setEnabled(True)
+            dlg.accept()
+
+        btn_generate_image.clicked.connect(start_generate)
+        btn_cancel_gen.clicked.connect(cancel_generate)
+        btn_use_portrait.clicked.connect(use_as_portrait)
+
+        gen_btn_row = QHBoxLayout()
+        gen_btn_row.addWidget(btn_generate_image)
+        gen_btn_row.addWidget(btn_cancel_gen)
+        gen_btn_row.addWidget(btn_use_portrait)
+        gen_btn_row.addStretch()
+        vbox.addLayout(gen_btn_row)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_copy = QPushButton("Copy")
@@ -1295,6 +1567,26 @@ class CharGenDialog(QDialog):
         btn_row.addWidget(btn_copy)
         btn_row.addWidget(btn_close)
         vbox.addLayout(btn_row)
+
+        def on_dlg_close(event):
+            # This popup is transient (WA_DeleteOnClose) but the worker is
+            # parented to self, not dlg, so it survives the popup closing
+            # and keeps running/cancelling in the background. Its signal
+            # closures (on_gen_done etc.) touch this popup's own widgets
+            # though, which WILL be destroyed once dlg closes — disconnect
+            # first so a signal firing after close can't touch dead widgets.
+            worker = gen_state["worker"]
+            if worker is not None:
+                try:
+                    worker.progress.disconnect()
+                    worker.finished.disconnect()
+                    worker.error.disconnect()
+                    worker.cancelled.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+                worker.request_cancel()
+            event.accept()
+        dlg.closeEvent = on_dlg_close
 
         dlg.exec()
 
@@ -1338,6 +1630,7 @@ class CharGenDialog(QDialog):
         self.btn_copy.setEnabled(True)
         self.btn_save_json.setEnabled(True)
         self.btn_save_png.setEnabled(True)
+        self._update_field_wordcount()
         self._set_busy(False)
         self._set_status(f"Imported: {os.path.basename(path)}", COLOR_STATUS_RUNNING)
         self._tabs.setCurrentIndex(1)

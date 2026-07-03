@@ -6,15 +6,17 @@ import os
 import subprocess
 import webbrowser
 
-from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
+from PyQt6.QtCore    import Qt, QProcess, QProcessEnvironment, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QApplication,
     QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTextEdit, QFrame,
-    QSplitter, QComboBox,
+    QSplitter, QComboBox, QMessageBox,
 )
 
+import imagegen_engine
+import imagegen_server
 from constants import *
 
 log = logging.getLogger(__name__)
@@ -108,6 +110,29 @@ class ServiceCard(QFrame):
         btn_row.addWidget(self.btn_stop)
         btn_row.addStretch()
         outer.addLayout(btn_row)
+
+
+# ---------------------------------------------------------------------------
+# Image Gen (local SDXL) pipeline warm-up worker
+# ---------------------------------------------------------------------------
+
+class _ImageGenLoadWorker(QThread):
+    """Loads (or confirms already-loaded) the SDXL checkpoint/LoRA/TI into GPU
+    memory so Start finishes before anyone actually needs to generate — the
+    Launcher's own dialog, or later a SillyTavern-facing API server, can then
+    generate immediately instead of eating the ~10s checkpoint-load cost on
+    their first request.
+    """
+
+    finished = pyqtSignal()
+    error    = pyqtSignal(str)
+
+    def run(self):
+        try:
+            imagegen_engine.load_pipeline()
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +394,11 @@ class MainWindow(QMainWindow):
         self._st_stopping       = False
         self._current_model_key = None
         self._chargen_dlg       = None
+        self._imagegen_local_dlg = None
+        self._imagegen_local_ready   = False
+        self._imagegen_local_loading = False
+        self._imagegen_load_worker   = None
+        self._imagegen_stop_requested = False
         self._api_ready         = False
 
         self._build_ui()
@@ -544,6 +574,48 @@ class MainWindow(QMainWindow):
 
         tools_vbox.addWidget(cg_row)
 
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet(f"background: {COLOR_BORDER}; border: none;")
+        tools_vbox.addWidget(sep2)
+
+        # Image Gen (local in-process SDXL) tool row
+        lig_row = QWidget()
+        lig_row.setStyleSheet("background: transparent;")
+        lig_layout = QHBoxLayout(lig_row)
+        lig_layout.setContentsMargins(14, 9, 14, 9)
+        lig_layout.setSpacing(8)
+
+        lig_title = QLabel("Image Gen")
+        lig_title.setFont(QFont(FONT_UI_FAMILY, 9, QFont.Weight.Bold))
+        lig_title.setStyleSheet(f"color: {COLOR_TEXT};")
+        lig_title.setFixedWidth(140)
+        lig_layout.addWidget(lig_title)
+
+        self.imagegen_local_status = StatusBadge()
+        lig_layout.addWidget(self.imagegen_local_status)
+
+        self.imagegen_local_via_lbl = QLabel("txt2img + LoRA + TI + hires-fix")
+        self.imagegen_local_via_lbl.setFont(QFont(FONT_UI_FAMILY, 8))
+        self.imagegen_local_via_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        lig_layout.addWidget(self.imagegen_local_via_lbl, 1)
+
+        self.btn_imagegen_local_start = QPushButton("Start")
+        self.btn_imagegen_local_stop  = QPushButton("Stop")
+        self.btn_imagegen_local_open  = QPushButton("Open")
+        self.btn_imagegen_local_stop.setEnabled(False)
+        self.btn_imagegen_local_open.setEnabled(False)
+        self.btn_imagegen_local_start.setEnabled(bool(SDXL_MODEL_PATH))
+        for b in (self.btn_imagegen_local_start, self.btn_imagegen_local_stop, self.btn_imagegen_local_open):
+            b.setFixedHeight(26)
+            b.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
+        lig_layout.addWidget(self.btn_imagegen_local_start)
+        lig_layout.addWidget(self.btn_imagegen_local_stop)
+        lig_layout.addWidget(self.btn_imagegen_local_open)
+
+        tools_vbox.addWidget(lig_row)
+
         # Kill All footer
         kill_row = QHBoxLayout()
         kill_row.setContentsMargins(14, 6, 14, 8)
@@ -608,6 +680,9 @@ class MainWindow(QMainWindow):
         self.btn_st_stop.clicked.connect(self._stop_st)
         self.btn_st_open.clicked.connect(self._open_st)
         self.btn_chargen.clicked.connect(self._open_chargen)
+        self.btn_imagegen_local_start.clicked.connect(self._start_imagegen_local)
+        self.btn_imagegen_local_stop.clicked.connect(self._stop_imagegen_local)
+        self.btn_imagegen_local_open.clicked.connect(self._open_imagegen_local)
         self.btn_kill_all.clicked.connect(self._kill_all)
         self.api_card.btn_activate.clicked.connect(self._activate_api)
         self.api_card.model_changed.connect(self._on_api_model_changed)
@@ -647,6 +722,9 @@ class MainWindow(QMainWindow):
 
     def _log_st(self, text: str):
         self._log(f"[SillyTavern] {text}", "#5ba0c8")
+
+    def _log_imagegen(self, text: str, color: str = "#c77dd4"):
+        self._log(f"[ImageGen] {text}", color)
 
     def _copy_log(self):
         QApplication.clipboard().setText(self.log.toPlainText())
@@ -890,12 +968,111 @@ class MainWindow(QMainWindow):
         self._update_tools()
 
     # ------------------------------------------------------------------
+    # Image Gen (local SDXL) pipeline warm-up
+    # ------------------------------------------------------------------
+
+    def _start_imagegen_local(self):
+        if self._imagegen_local_loading or self._imagegen_local_ready:
+            return
+        if not SDXL_MODEL_PATH or not os.path.isfile(SDXL_MODEL_PATH):
+            self._log_imagegen("ERROR: SDXL checkpoint not found — check Settings/config.", COLOR_STATUS_ERROR)
+            self.imagegen_local_status.set_error()
+            return
+
+        self._imagegen_local_loading = True
+        self.imagegen_local_status.set_starting()
+        self.btn_imagegen_local_start.setEnabled(False)
+        self._log_imagegen("Loading model into memory…")
+
+        worker = _ImageGenLoadWorker(self)
+        worker.finished.connect(self._on_imagegen_local_loaded)
+        worker.error.connect(self._on_imagegen_local_load_error)
+        worker.start()
+        self._imagegen_load_worker = worker
+
+    def _on_imagegen_local_loaded(self):
+        self._imagegen_local_loading = False
+        self._imagegen_load_worker = None
+        if self._imagegen_stop_requested:
+            # User clicked Stop/Kill All/closed the window while this load was
+            # still in flight — the pipeline only just now finished loading
+            # and grabbed the lock, so try_unload_pipeline() (which failed or
+            # was skipped earlier) can actually succeed now. Land in a
+            # stopped state instead of silently flipping back to "ready".
+            self._imagegen_stop_requested = False
+            imagegen_engine.try_unload_pipeline()
+            self._imagegen_local_ready = False
+            self.imagegen_local_status.set_stopped()
+            self.imagegen_local_via_lbl.setText("txt2img + LoRA + TI + hires-fix")
+            self.btn_imagegen_local_start.setEnabled(True)
+            self._log_imagegen("Stopped (was still loading when Stop was requested).")
+            return
+        # The pipeline itself is loaded and usable via Open (ImageGenDialog
+        # talks to imagegen_engine directly) regardless of whether the
+        # SillyTavern-facing HTTP server below manages to bind its port, so
+        # Stop/Open get enabled either way — only the status text/log
+        # distinguish a bind failure from a real "Ready".
+        self._imagegen_local_ready = True
+        self.btn_imagegen_local_stop.setEnabled(True)
+        self.btn_imagegen_local_open.setEnabled(True)
+        try:
+            imagegen_server.start()
+        except OSError as e:
+            self.imagegen_local_status.set_error()
+            self.imagegen_local_via_lbl.setText("Pipeline ready — API server failed to start")
+            self._log_imagegen(
+                f"ERROR: pipeline loaded, but the Image Gen API server failed to bind "
+                f"port {SDXL_API_PORT}: {e}", COLOR_STATUS_ERROR)
+            return
+        self.imagegen_local_status.set_running()
+        self.imagegen_local_via_lbl.setText(f"Ready — http://127.0.0.1:{SDXL_API_PORT}")
+        self._log_imagegen(f"Ready. API listening on http://127.0.0.1:{SDXL_API_PORT}")
+
+    def _on_imagegen_local_load_error(self, message: str):
+        self._imagegen_local_loading = False
+        self._imagegen_stop_requested = False
+        self.imagegen_local_status.set_error()
+        self.btn_imagegen_local_start.setEnabled(True)
+        self._log_imagegen(f"ERROR: {message}", COLOR_STATUS_ERROR)
+        self._imagegen_load_worker = None
+
+    def _stop_imagegen_local(self):
+        if not self._imagegen_local_ready and not self._imagegen_local_loading:
+            return
+        if self._imagegen_local_loading:
+            # The load worker may not have acquired the pipeline lock yet, so
+            # try_unload_pipeline() could spuriously succeed on an empty cache
+            # right now and let this function flip state to "stopped" — only
+            # for the load to finish moments later and flip it back to
+            # "ready". Defer the actual stop to the load-completion callback
+            # instead, which is guaranteed to run after the lock is held.
+            self._imagegen_stop_requested = True
+            self._log_imagegen("Stop requested — finishing the in-progress load, then stopping.")
+            return
+        # Non-blocking: if a generation is in progress it holds the pipeline
+        # lock, so this reports busy instead of freezing the GUI thread
+        # waiting on it. Retry Stop once the generation finishes.
+        if not imagegen_engine.try_unload_pipeline():
+            self._log_imagegen("Can't stop while a generation is in progress — try again once it finishes.", COLOR_STATUS_ERROR)
+            return
+        imagegen_server.stop()
+        self._imagegen_local_ready = False
+        self._imagegen_local_loading = False
+        self.imagegen_local_status.set_stopped()
+        self.imagegen_local_via_lbl.setText("txt2img + LoRA + TI + hires-fix")
+        self.btn_imagegen_local_start.setEnabled(True)
+        self.btn_imagegen_local_stop.setEnabled(False)
+        self.btn_imagegen_local_open.setEnabled(False)
+        self._log_imagegen("Unloaded.")
+
+    # ------------------------------------------------------------------
     # Global controls
     # ------------------------------------------------------------------
 
     def _kill_all(self):
         self._stop_kobold()
         self._stop_st()
+        self._stop_imagegen_local()
 
     def _open_st(self):
         webbrowser.open(SILLYTAVERN_URL)
@@ -914,6 +1091,14 @@ class MainWindow(QMainWindow):
         self._chargen_dlg.show()
         self._chargen_dlg.raise_()
         self._chargen_dlg.activateWindow()
+
+    def _open_imagegen_local(self):
+        from imagegen_dialog import ImageGenDialog
+        if self._imagegen_local_dlg is None:
+            self._imagegen_local_dlg = ImageGenDialog(self)
+        self._imagegen_local_dlg.show()
+        self._imagegen_local_dlg.raise_()
+        self._imagegen_local_dlg.activateWindow()
 
     # ------------------------------------------------------------------
     # API backend
@@ -988,13 +1173,28 @@ class MainWindow(QMainWindow):
         return None
 
     def closeEvent(self, event):
+        if imagegen_engine.is_busy():
+            reply = QMessageBox.question(
+                self, "Image Gen is busy",
+                "An image is still loading or generating. Closing now won't wait "
+                "for it to finish and may leave it in an inconsistent state.\n\n"
+                "Close anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         if self._chargen_dlg is not None:
             self._chargen_dlg.close()
+        if self._imagegen_local_dlg is not None:
+            self._imagegen_local_dlg.close()
         if self.api_card._worker and self.api_card._worker.isRunning():
             self.api_card._worker.terminate()
             self.api_card._worker.wait(2000)
         self._stop_kobold()
         self._stop_st()
+        self._stop_imagegen_local()
         # Brief wait to let processes actually exit before the app quits
         if self._kobold_proc:
             self._kobold_proc.waitForFinished(2000)

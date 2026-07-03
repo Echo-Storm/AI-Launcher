@@ -4,7 +4,7 @@ import json
 import os
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.2.0"
+APP_VERSION  = "1.4.0"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,7 @@ _kob = _cfg.get("koboldcpp", {})
 _st  = _cfg.get("sillytavern", {})
 _cg  = _cfg.get("chargen", {})
 _api = _cfg.get("api", {})
+_sdxl = _cfg.get("sdxl", {})
 
 # ---------------------------------------------------------------------------
 # Models list — first entry is the startup default
@@ -72,6 +73,52 @@ SILLYTAVERN_DIR  = _st.get("dir", "")
 SILLYTAVERN_ARGS = ["server.js"]
 SILLYTAVERN_URL  = f"http://127.0.0.1:{_st.get('port', 8000)}"
 SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on"]
+
+# ---------------------------------------------------------------------------
+# SDXL (in-process diffusers backend — txt2img + LoRA + TI + ESRGAN hires-fix)
+# ---------------------------------------------------------------------------
+
+# Scheduler presets offered in the Settings UI — key -> display label.
+# imagegen_engine.py maps each key to a diffusers scheduler class/kwargs.
+SDXL_SCHEDULER_CHOICES = [
+    ("dpmpp_2m_karras",  "DPM++ 2M Karras"),
+    ("euler_a",          "Euler a"),
+    ("dpmpp_sde_karras", "DPM++ SDE Karras"),
+    ("unipc",            "UniPC"),
+]
+
+# Single source of truth for both config.json fallbacks and the Settings UI's
+# "Restore Defaults" button (settings_dialog.py's Image Gen tab).
+SDXL_GENERATION_DEFAULTS = {
+    "base_width":    1024,
+    "base_height":   1024,
+    "steps":         30,
+    "cfg_scale":     7.0,
+    "hires_scale":   1.5,
+    "hires_denoise": 0.45,
+    "scheduler":     "dpmpp_2m_karras",
+}
+
+SDXL_DIR            = _sdxl.get("dir", "")
+SDXL_MODEL_PATH     = _sdxl.get("model_path", "")
+SDXL_LORAS: list[dict] = _sdxl.get("loras", [])
+SDXL_TEXTUAL_INVERSIONS: list[dict] = _sdxl.get("textual_inversions", [])
+SDXL_UPSCALER_PATH  = _sdxl.get("upscaler_path", "")
+# Falls back to a path under this app's own folder (not just SDXL_DIR) so it's
+# never empty even when the user has only ever set a checkpoint via the
+# Settings UI's Output Directory field and never touched sdxl.dir.
+SDXL_OUTPUT_DIR     = _sdxl.get("output_dir") or (
+    os.path.join(SDXL_DIR, "output") if SDXL_DIR else os.path.join(_HERE, "SDXL", "output")
+)
+SDXL_BASE_WIDTH     = int(_sdxl.get("base_width", SDXL_GENERATION_DEFAULTS["base_width"]))
+SDXL_BASE_HEIGHT    = int(_sdxl.get("base_height", SDXL_GENERATION_DEFAULTS["base_height"]))
+SDXL_HIRES_SCALE    = float(_sdxl.get("hires_scale", SDXL_GENERATION_DEFAULTS["hires_scale"]))
+SDXL_HIRES_DENOISE  = float(_sdxl.get("hires_denoise", SDXL_GENERATION_DEFAULTS["hires_denoise"]))
+SDXL_STEPS          = int(_sdxl.get("steps", SDXL_GENERATION_DEFAULTS["steps"]))
+SDXL_CFG_SCALE      = float(_sdxl.get("cfg_scale", SDXL_GENERATION_DEFAULTS["cfg_scale"]))
+SDXL_SCHEDULER      = _sdxl.get("scheduler", SDXL_GENERATION_DEFAULTS["scheduler"])
+SDXL_API_PORT       = int(_sdxl.get("port", 7860))
+SDXL_ALLOW_ST_OVERRIDE = bool(_sdxl.get("allow_st_override", False))
 
 # ---------------------------------------------------------------------------
 # CharGen

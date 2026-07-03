@@ -33,5 +33,26 @@
         "base_url": "https://openrouter.ai/api",
         "api_key":  "sk-or-...",
         "model":    "meta-llama/llama-3.1-8b-instruct:free"
+    },
+    "sdxl": {
+        "dir":            "C:\\Path\\To\\SDXL",
+        "model_path":     "C:\\Path\\To\\SDXL\\Model\\model.safetensors",
+        "loras": [
+            {"path": "C:\\Path\\To\\SDXL\\Lora\\lora.safetensors", "weight": 1.0}
+        ],
+        "textual_inversions": [
+            {"path": "C:\\Path\\To\\SDXL\\Embeddings\\negative.safetensors", "token": "negative"}
+        ],
+        "upscaler_path":  "C:\\Path\\To\\SDXL\\Upscaler\\upscaler.pth",
+        "output_dir":     "C:\\Path\\To\\SDXL\\output",
+        "base_width":     1024,
+        "base_height":    1024,
+        "hires_scale":    1.5,
+        "hires_denoise":  0.45,
+        "steps":          30,
+        "cfg_scale":      7.0,
+        "scheduler":      "dpmpp_2m_karras",
+        "port":           7860,
+        "allow_st_override": false
     }
 }

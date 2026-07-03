@@ -1,2 +1,16 @@
 PyQt6>=6.5.0
 Pillow>=10.0.0
+
+# --- Image Gen (in-process SDXL backend) ---
+# torch/torchvision need CUDA 13 wheels — install with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu130
+# before running `pip install -r requirements.txt`, or the plain PyPI torch
+# (no CUDA) will be picked up instead.
+torch==2.12.1
+numpy==2.5.0
+diffusers==0.37.1
+transformers==4.56.2
+peft==0.17.1
+accelerate==1.13.0
+safetensors==0.8.0
+spandrel==0.4.2
