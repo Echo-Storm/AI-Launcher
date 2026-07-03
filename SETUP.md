@@ -287,4 +287,3 @@ subfolder.
 ## Where to go next
 
 - [README.md](README.md) — full feature list, Deep Dive sections for CharGen and Image Gen, complete config schema
-- [CLAUDE.md](CLAUDE.md) — internal architecture notes, if you're modifying the code
