@@ -215,8 +215,8 @@ You can skip KoboldCpp and SillyTavern entirely if you just want the character c
 Quick version, if you already have Python 3.13+ and know what you're doing:
 
 ```
-git clone https://github.com/YOUR_USERNAME/ai-writing-tools.git
-cd ai-writing-tools
+git clone https://github.com/Echo-Storm/AI-Launcher.git
+cd AI-Launcher
 python -m venv venv
 venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cu130

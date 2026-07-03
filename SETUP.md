@@ -61,8 +61,8 @@ before continuing. On Windows, if you have multiple Python versions installed, u
 ## Step 1 — Clone and create the virtual environment
 
 ```
-git clone https://github.com/YOUR_USERNAME/ai-writing-tools.git
-cd ai-writing-tools
+git clone https://github.com/Echo-Storm/AI-Launcher.git
+cd AI-Launcher
 python -m venv venv
 venv\Scripts\activate
 ```
