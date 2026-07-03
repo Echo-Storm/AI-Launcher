@@ -2,9 +2,11 @@
 
 A dark-themed Windows desktop app for running local AI writing sessions. Manages **KoboldCpp** and **SillyTavern** as background services, switches seamlessly between local GGUF inference and remote API backends, includes a full **SillyTavern character card generator** with portrait embedding and personality expansion, and an in-process **SDXL image generator** that SillyTavern can generate through directly.
 
-![Python](https://img.shields.io/badge/python-3.11+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.4.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.4.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 > If this saves you time: [☕ Ko-fi](https://ko-fi.com/xechostormx)
+>
+> First time setting this up? **[SETUP.md](SETUP.md)** has the full walkthrough.
 
 ---
 
@@ -196,36 +198,41 @@ The Image Gen settings tab has two tables — one for LoRAs (file path + weight)
 
 ## Requirements
 
-- **Python 3.11+** (KoboldCpp/SillyTavern/CharGen side) — **Python 3.13+** if you want Image Gen, since it needs a matching CUDA `torch` build
+- **Python 3.13+** — one venv runs the whole app, and `ui.py` imports the Image Gen stack (`torch` included) unconditionally at startup, so this applies even if you never touch Image Gen. See [SETUP.md](SETUP.md#the-python-version-gotcha) for why.
 - **PyQt6** and **Pillow** — see `requirements.txt`
 - **[KoboldCpp](https://github.com/LostRuins/koboldcpp)** (optional — for local inference)
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** + **Node.js** (optional — for the chat frontend)
 - A **GGUF model file** — tested with Cydonia 24B Q4_K_M, Mistral variants, and dedicated CharGen models
 - An **API key** from OpenRouter, Groq, or similar (optional — for remote inference)
-- For **Image Gen** (optional): an **NVIDIA GPU**, an **SDXL checkpoint** (`.safetensors`), and `torch`/`diffusers`/`transformers`/`peft`/`accelerate`/`safetensors`/`spandrel` — see `requirements.txt`'s comment for the CUDA-specific torch install command. LoRA/upscaler/Textual Inversion are optional.
+- For actually *using* **Image Gen**: an **NVIDIA GPU** and an **SDXL checkpoint** (`.safetensors`) — `torch`/`diffusers`/`transformers`/`peft`/`accelerate`/`safetensors`/`spandrel` install either way (see [SETUP.md](SETUP.md#step-2--install-dependencies) for the CUDA-specific torch install order). LoRA/upscaler/Textual Inversion are optional. Without a GPU, the packages still import fine — you just won't get usable generation speed.
 
-You can run with API-only and skip KoboldCpp and SillyTavern entirely if you just want the character card generator with a remote model. Image Gen is fully independent of the other backends — skip it entirely if you don't have a compatible GPU.
+You can skip KoboldCpp and SillyTavern entirely if you just want the character card generator with a remote model — see [SETUP.md's minimal configs](SETUP.md#minimal-configs).
 
 ---
 
 ## Installation
+
+Quick version, if you already have Python 3.13+ and know what you're doing:
 
 ```
 git clone https://github.com/YOUR_USERNAME/ai-writing-tools.git
 cd ai-writing-tools
 python -m venv venv
 venv\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 copy config.example.json config.json
 ```
 
-Edit `config.json` with your paths (or use the Settings GUI after first launch — it will prompt you if config.json is missing).
+Edit `config.json` with your paths (or use the Settings GUI after first launch — it
+will prompt you if config.json is missing). Then run `python main.py` or double-click
+`launch.bat`.
 
-Then run:
-```
-python main.py
-```
-or double-click `launch.bat`.
+**First time setting this up, or don't want Image Gen?** See **[SETUP.md](SETUP.md)**
+for the full walkthrough — Python version requirements explained, the CUDA-torch
+install-order gotcha, where to get KoboldCpp/SillyTavern/SDXL checkpoints, a suggested
+Image Gen folder layout, minimal config examples, and a troubleshooting section for
+the errors people actually hit.
 
 ---
 
