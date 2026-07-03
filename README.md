@@ -10,7 +10,15 @@ A dark-themed Windows desktop app for running local AI writing sessions. Manages
 
 ## Screenshots
 
-> *Screenshots coming soon. In the meantime: dark panel UI, two backend cards side by side (KoboldCpp + API), a Tools section below with SillyTavern and CharGen rows, and a log pane at the bottom.*
+**Main window** — backends idle, then KoboldCpp running with the API backend activated and routing CharGen:
+
+![Main window, backends stopped](screenshots/main-window-stopped.png)
+![Main window, KoboldCpp running + API activated](screenshots/main-window-running.png)
+
+**Character Card Generator** — input form, and a generated card with the Condense feature (word count + Short/Medium/Long) and a portrait applied:
+
+![CharGen input tab](screenshots/chargen-input.png)
+![CharGen output tab with Condense and portrait](screenshots/chargen-output.png)
 
 ---
 
@@ -339,8 +347,7 @@ or double-click `launch.bat`.
 
 Features under consideration for future versions:
 
-- **Screenshot documentation** — in-app screenshots in this README
-- **Image Gen**: sampler/scheduler/upscaler dropdowns in SillyTavern's UI (currently unimplemented server-side; generation works fine without them, ST's dropdowns just stay empty)
+- **Image Gen**: `/sdapi/v1/samplers`/`/sdapi/v1/schedulers`/`/sdapi/v1/upscalers` stubs so SillyTavern's *own* UI shows dropdowns for these instead of staying empty (this app's own Settings tab already has a scheduler dropdown and Restore Defaults — this item is only about mirroring that into ST's UI, not required for generation to work)
 
 Contributions and suggestions welcome via issues.
 
