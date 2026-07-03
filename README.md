@@ -204,7 +204,7 @@ The Image Gen settings tab has two tables — one for LoRAs (file path + weight)
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** + **Node.js** (optional — for the chat frontend)
 - A **GGUF model file** — tested with Cydonia 24B Q4_K_M, Mistral variants, and dedicated CharGen models
 - An **API key** from OpenRouter, Groq, or similar (optional — for remote inference)
-- For actually *using* **Image Gen**: an **NVIDIA GPU** and an **SDXL checkpoint** (`.safetensors`) — `torch`/`diffusers`/`transformers`/`peft`/`accelerate`/`safetensors`/`spandrel` install either way (see [SETUP.md](SETUP.md#step-2--install-dependencies) for the CUDA-specific torch install order). LoRA/upscaler/Textual Inversion are optional. Without a GPU, the packages still import fine — you just won't get usable generation speed.
+- For actually *using* **Image Gen**: an **NVIDIA GPU** and an **SDXL checkpoint** (`.safetensors`) — default recommendation is Stability AI's own [`sd_xl_base_1.0.safetensors`](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors) (6.94 GB), see [SETUP.md](SETUP.md#get-a-checkpoint) for why. `torch`/`diffusers`/`transformers`/`peft`/`accelerate`/`safetensors`/`spandrel` install either way (see [SETUP.md](SETUP.md#step-2--install-dependencies) for the CUDA-specific torch install order). LoRA/upscaler/Textual Inversion are optional. Without a GPU, the packages still import fine — you just won't get usable generation speed.
 
 You can skip KoboldCpp and SillyTavern entirely if you just want the character card generator with a remote model — see [SETUP.md's minimal configs](SETUP.md#minimal-configs).
 

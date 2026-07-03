@@ -129,9 +129,20 @@ Skip this whole step if you're not using Image Gen.
 ### Get a checkpoint
 
 You need one **SDXL** checkpoint in `.safetensors` format (not SD1.5 — this app's
-pipeline is hardcoded to `StableDiffusionXLPipeline`). [CivitAI](https://civitai.com/)
-and [Hugging Face](https://huggingface.co/models?other=stable-diffusion-xl) both have
-plenty; any SDXL base or SDXL-based merge works.
+pipeline is hardcoded to `StableDiffusionXLPipeline`).
+
+**Default recommendation:** the official base model —
+[`sd_xl_base_1.0.safetensors`](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors)
+(6.94 GB, CreativeML Open RAIL++-M license) from Stability AI directly. It's what this
+app's own defaults (1024×1024 resolution, the scheduler presets, hires-fix settings)
+were tuned against, and it's a safety-trained general-purpose model — a sensible
+starting point regardless of who might end up using this on a given machine.
+
+Community finetunes on [CivitAI](https://civitai.com/) and
+[Hugging Face](https://huggingface.co/models?other=stable-diffusion-xl) work too (any
+SDXL base or SDXL-derived merge is compatible) — just be aware CivitAI hosts models
+across the full range of content ratings and licenses, so check a model's page before
+using it if that matters for your setup.
 
 ### Suggested folder layout
 
