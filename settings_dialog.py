@@ -514,7 +514,7 @@ class SettingsDialog(QDialog):
         g.addWidget(self._kob_embed, row, 1)
         btn_embed = QPushButton("Browse…")
         btn_embed.setFixedWidth(72)
-        btn_embed.clicked.connect(lambda: self._browse_file(self._kob_embed, "GGUF models (*.gguf)"))
+        btn_embed.clicked.connect(lambda: self._browse_file(self._kob_embed, "GGUF models (*.gguf);;All files (*)"))
         g.addWidget(btn_embed, row, 2)
 
         row += 1
@@ -1048,8 +1048,22 @@ class SettingsDialog(QDialog):
 
     def _on_save(self):
         self._warn_missing_imagegen_paths()
+        self._warn_missing_embeddings_path()
         if self._save_config():
             self.accept()
+
+    def _warn_missing_embeddings_path(self):
+        """Same heads-up as _warn_missing_imagegen_paths(), for the Embeddings
+        model path — a typo'd/stale path here silently reproduces the exact
+        "KoboldCpp returned an empty embedding" confusion this field exists
+        to prevent, with no clue until koboldcpp's own log at launch time."""
+        path = self._kob_embed.text().strip()
+        if path and not os.path.isfile(path):
+            QMessageBox.warning(
+                self, "Embeddings",
+                f"This embeddings model path doesn't exist on disk:\n\n{path}\n\n"
+                "KoboldCpp will start without embeddings support until this is fixed."
+            )
 
     def _warn_missing_imagegen_paths(self):
         """Non-blocking heads-up for typo'd/missing Image Gen paths — without

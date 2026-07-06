@@ -260,15 +260,16 @@ the errors people actually hit.
         }
     ],
     "koboldcpp": {
-        "exe":             "C:\\path\\to\\koboldcpp.exe",
-        "host":            "127.0.0.1",
-        "port":            5001,
-        "gpu_layers":      40,
-        "context_size":    8192,
-        "use_cuda":        true,
-        "use_vulkan":      false,
-        "flash_attention": true,
-        "quiet":           true
+        "exe":              "C:\\path\\to\\koboldcpp.exe",
+        "host":             "127.0.0.1",
+        "port":             5001,
+        "gpu_layers":       40,
+        "context_size":     8192,
+        "use_cuda":         true,
+        "use_vulkan":       false,
+        "flash_attention":  true,
+        "quiet":            true,
+        "embeddings_model": ""
     },
     "sillytavern": {
         "dir":  "C:\\path\\to\\SillyTavern",

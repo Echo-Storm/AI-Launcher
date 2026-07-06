@@ -38,10 +38,11 @@ MODELS: list[dict] = _cfg.get("models", [])
 # KoboldCpp
 # ---------------------------------------------------------------------------
 
-KOBOLD_EXE      = _kob.get("exe", "")
-KOBOLD_HOST     = _kob.get("host", "127.0.0.1")
-KOBOLD_PORT     = int(_kob.get("port", 5001))
-KOBOLD_API_BASE = f"http://{KOBOLD_HOST}:{KOBOLD_PORT}"
+KOBOLD_EXE       = _kob.get("exe", "")
+KOBOLD_HOST      = _kob.get("host", "127.0.0.1")
+KOBOLD_PORT      = int(_kob.get("port", 5001))
+KOBOLD_API_BASE  = f"http://{KOBOLD_HOST}:{KOBOLD_PORT}"
+EMBEDDINGS_MODEL = _kob.get("embeddings_model", "")
 
 
 def build_kobold_args(model_path: str) -> list[str]:
@@ -60,9 +61,8 @@ def build_kobold_args(model_path: str) -> list[str]:
         args.append("--flashattention")
     if _kob.get("quiet", True):
         args.append("--quiet")
-    embeddings_model = _kob.get("embeddings_model", "")
-    if embeddings_model:
-        args += ["--embeddingsmodel", embeddings_model]
+    if EMBEDDINGS_MODEL and os.path.isfile(EMBEDDINGS_MODEL):
+        args += ["--embeddingsmodel", EMBEDDINGS_MODEL]
     return args
 
 

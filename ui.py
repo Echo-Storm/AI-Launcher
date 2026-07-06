@@ -799,6 +799,12 @@ class MainWindow(QMainWindow):
             self.kobold_card.status.set_error()
             return
 
+        if EMBEDDINGS_MODEL and not os.path.isfile(EMBEDDINGS_MODEL):
+            self._log_kobold(
+                f"WARNING: Embeddings model not found — Vector Storage / CharMemory "
+                f"embeddings will be unavailable this session:\n  {EMBEDDINGS_MODEL}"
+            )
+
         self._current_model_key = model_key
         self._kobold_ready = False
         self.kobold_card.status.set_starting()
