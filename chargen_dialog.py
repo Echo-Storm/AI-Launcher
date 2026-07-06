@@ -135,6 +135,8 @@ _REGENERATE_CONFIG = {
 # "past what Condense would even consider Long".
 # ---------------------------------------------------------------------------
 
+_REQUIRED_OUTPUT_FIELDS = ("name", "description")
+
 _FIELD_LENGTH_TARGETS = {
     "personality": {"short": 100, "medium": 200, "long": 350},
     "scenario":    {"short": 80,  "medium": 150, "long": 275},
@@ -619,6 +621,7 @@ class CharGenDialog(QDialog):
         self._current_api_model = API_MODEL
         self._expanding_field   = "personality"
         self._expanding_verb    = "expanded"
+        self._last_hint_key     = None
 
         self._build_ui()
 
@@ -1032,8 +1035,16 @@ class CharGenDialog(QDialog):
     # ------------------------------------------------------------------
 
     def set_model_hint(self, model_key: str | None):
-        """Called by MainWindow each time the dialog is shown."""
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        """Called by MainWindow each time the dialog is shown. Only reacts when
+        the model/backend actually changed since the last call — otherwise
+        simply reopening the cached dialog would repeatedly stomp a
+        meaningful status (e.g. "Generation complete...") with this hint."""
+        backend = self._backend_kind()
+        hint_key = (model_key, backend)
+        if hint_key == self._last_hint_key:
+            return
+        self._last_hint_key = hint_key
+
         if backend == "api":
             if self._last_card is None:
                 self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
@@ -1115,12 +1126,14 @@ class CharGenDialog(QDialog):
         self.btn_cancel.setEnabled(busy)
         self.btn_cancel.setVisible(busy)
 
+    def _backend_kind(self) -> str:
+        return self._combo_backend.currentData() if self._combo_backend else "local"
+
     def _resolve_backend(self):
         """Returns (api_base, api_key, model) for whichever backend is currently
         active — shared by every action that talks to _GenerateWorker instead of
         each one re-deriving it independently."""
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
+        if self._backend_kind() == "api":
             return API_BASE_URL, API_KEY, self._current_api_model
         return self._api_base, "", ""
 
@@ -1153,7 +1166,7 @@ class CharGenDialog(QDialog):
             self._lbl_wordcount.setText("")
             return
         field_key = self._expand_combo.currentData()
-        text = self._last_card.get(field_key, "") or ""
+        text = str(self._last_card.get(field_key, "") or "")
         count = _word_count(text)
         color = _wordcount_color(field_key, count)
         self._lbl_wordcount.setText(f"{count} words")
@@ -1204,10 +1217,11 @@ class CharGenDialog(QDialog):
             self._lbl_card_valid.setText("")
             return
         missing = []
-        if not self.out_name.text().strip():
-            missing.append("name")
-        if not self.out_description.toPlainText().strip():
-            missing.append("description")
+        for field_key in _REQUIRED_OUTPUT_FIELDS:
+            widget = self._output_field_widgets[field_key]
+            text = widget.text() if isinstance(widget, QLineEdit) else widget.toPlainText()
+            if not text.strip():
+                missing.append(field_key)
         if missing:
             self._lbl_card_valid.setText(f"●  Missing {', '.join(missing)}")
             self._lbl_card_valid.setStyleSheet(
@@ -1345,6 +1359,7 @@ class CharGenDialog(QDialog):
             self._lbl_raw_fallback.setVisible(True)
             self._raw_fallback.setVisible(True)
             self._raw_fallback.setPlainText(raw)
+            self._update_card_validity()
             self._set_status(
                 "Could not parse JSON — raw output shown below. Try regenerating or edit manually.",
                 COLOR_STATUS_ERROR,
@@ -1471,7 +1486,7 @@ class CharGenDialog(QDialog):
     def _on_expand_done(self, raw: str):
         self._worker = None
         raw = raw.strip()
-        if not raw:
+        if not raw or self._last_card is None:
             self._set_status("No content returned — try again.", COLOR_STATUS_ERROR)
             self._set_busy(False)
             return
