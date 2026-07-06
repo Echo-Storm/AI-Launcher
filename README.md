@@ -105,8 +105,11 @@ Temperature from 0.60 (Safe — consistent, predictable) to 1.20 (Creative — m
 **Distinctive mode**
 Adds a stronger creative direction prompt that specifically discourages clichés and overused archetypes — pushes for internal contradictions, specific speech register, idiosyncratic details. Useful when you're tired of getting the same brooding warrior or cheerful healer.
 
+**NSFW-aware**
+Off by default — every generation (initial Generate, Expand, Regenerate, Condense, and the Portrait Prompt) is explicitly instructed to stay safe-for-work: no explicit sexual content, no graphic violence or gore. Check this box to instead explicitly permit mature/adult themes where they fit the character concept. Applies consistently across every action on the card, not just the initial generation, so a card started SFW doesn't drift into explicit territory through Expand/Regenerate (or vice versa) without you deliberately opting in.
+
 **Set as default**
-Saves your current temperature and Distinctive state to `chargen_prefs.json`. Restored on next open.
+Saves your current temperature, Distinctive, and NSFW-aware state to `chargen_prefs.json`. Restored on next open.
 
 ### Character fields
 

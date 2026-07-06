@@ -40,6 +40,18 @@ _DISTINCTIVE = (
     "register, and at least one surprising detail that makes them feel unmistakably real. "
 )
 
+_SFW_SAFE = (
+    "Keep all content strictly safe-for-work: no explicit sexual content and no graphic "
+    "violence or gore. Mature themes (danger, conflict, romance) are fine as long as they "
+    "stay tasteful and non-explicit. "
+)
+
+_NSFW_ALLOWED = (
+    "Mature and adult content is permitted where it fits the character concept, including "
+    "explicit sexual content, graphic violence, and other NSFW themes — write without "
+    "holding back for a general audience. "
+)
+
 _OUTPUT = (
     "Output ONLY the raw JSON object — no markdown fences, no commentary, no preamble."
 )
@@ -181,6 +193,7 @@ def _build_system_prompt(
     scenario: bool = True,
     first_mes: bool = True,
     mes_example: bool = False,
+    nsfw: bool = False,
 ) -> str:
     fields = ["name", "description", "personality"]
     if scenario:
@@ -204,6 +217,7 @@ def _build_system_prompt(
         + "with these exact fields: " + ", ".join(fields) + ". "
         + "".join(notes)
         + (_DISTINCTIVE if distinctive else "")
+        + (_NSFW_ALLOWED if nsfw else _SFW_SAFE)
         + _OUTPUT
     )
 
@@ -328,7 +342,7 @@ class _GenerateWorker(QThread):
 
         payload_dict = {
             "messages":    self._messages,
-            "max_tokens":  8192,
+            "max_tokens":  4096,
             "temperature": self._temperature,
             "stream":      False,
         }
@@ -684,13 +698,18 @@ class CharGenDialog(QDialog):
         form_vbox.addLayout(temp_row)
         form_vbox.addSpacing(6)
 
-        # Distinctive toggle + Set as default
+        # Distinctive / NSFW toggles + Set as default
         dist_row = QHBoxLayout()
         dist_row.setSpacing(8)
         self.chk_distinctive = QCheckBox("Distinctive character  (stronger creative direction)")
         self.chk_distinctive.setChecked(False)
         self.chk_distinctive.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
-        dist_row.addWidget(self.chk_distinctive, 1)
+        dist_row.addWidget(self.chk_distinctive)
+        self.chk_nsfw = QCheckBox("NSFW-aware  (allow mature/explicit content)")
+        self.chk_nsfw.setChecked(False)
+        self.chk_nsfw.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        dist_row.addWidget(self.chk_nsfw)
+        dist_row.addStretch(1)
         self._btn_set_default = QPushButton("Set as default")
         self._btn_set_default.setFixedHeight(20)
         self._btn_set_default.setFixedWidth(100)
@@ -710,6 +729,8 @@ class CharGenDialog(QDialog):
                 self._slider_temp.setValue(int(float(_prefs["temperature"]) * 100))
             if "distinctive" in _prefs:
                 self.chk_distinctive.setChecked(bool(_prefs["distinctive"]))
+            if "nsfw" in _prefs:
+                self.chk_nsfw.setChecked(bool(_prefs["nsfw"]))
         except (TypeError, ValueError):
             pass
 
@@ -1073,6 +1094,7 @@ class CharGenDialog(QDialog):
         ok = _save_prefs({
             "temperature": self._slider_temp.value() / 100.0,
             "distinctive": self.chk_distinctive.isChecked(),
+            "nsfw": self.chk_nsfw.isChecked(),
         })
         if ok:
             self._set_status("Generation defaults saved.", COLOR_STATUS_RUNNING)
@@ -1125,12 +1147,14 @@ class CharGenDialog(QDialog):
         use_first_mes   = self.chk_first_mes.isChecked()
         use_examples    = self.chk_mes_example.isChecked()
         use_distinctive = self.chk_distinctive.isChecked()
+        use_nsfw        = self.chk_nsfw.isChecked()
 
         system = _build_system_prompt(
             distinctive=use_distinctive,
             scenario=use_scenario,
             first_mes=use_first_mes,
             mes_example=use_examples,
+            nsfw=use_nsfw,
         )
 
         fields = {
@@ -1215,6 +1239,7 @@ class CharGenDialog(QDialog):
 
         field_key = self._expand_combo.currentData()
         sys_prompt, user_instruction = _EXPAND_CONFIG[field_key]
+        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
         must_include = self._edit_must_include.text().strip()
 
         user_content = (
@@ -1261,6 +1286,7 @@ class CharGenDialog(QDialog):
 
         field_key = self._expand_combo.currentData()
         sys_prompt, user_instruction = _REGENERATE_CONFIG[field_key]
+        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
         must_include = self._edit_must_include.text().strip()
 
         context_card = {k: v for k, v in self._last_card.items() if k != field_key}
@@ -1311,6 +1337,7 @@ class CharGenDialog(QDialog):
         field_key = self._expand_combo.currentData()
         length_key = self._condense_length.currentData()
         sys_prompt, user_template = _CONDENSE_CONFIG[field_key]
+        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
         target = _FIELD_LENGTH_TARGETS[field_key][length_key]
         user_instruction = user_template.format(target=target)
         must_include = self._edit_must_include.text().strip()
@@ -1370,12 +1397,14 @@ class CharGenDialog(QDialog):
         if not self._last_card:
             return
 
+        portrait_sys_prompt = (
+            "You are an expert at writing image generation prompts for AI art tools "
+            "like Stable Diffusion and Midjourney. You write detailed, evocative portrait "
+            "prompts using comma-separated descriptors. "
+        ) + (_NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE)
+
         messages = [
-            {"role": "system", "content": (
-                "You are an expert at writing image generation prompts for AI art tools "
-                "like Stable Diffusion and Midjourney. You write detailed, evocative portrait "
-                "prompts using comma-separated descriptors."
-            )},
+            {"role": "system", "content": portrait_sys_prompt},
             {"role": "user", "content": (
                 f"Character card:\n{json.dumps(self._last_card, indent=2, ensure_ascii=False)}\n\n"
                 "Write a detailed portrait prompt for an AI image generator. Include: physical "
