@@ -501,7 +501,31 @@ class SettingsDialog(QDialog):
             lambda checked: checked and self._kob_cuda.setChecked(False)
         )
 
-        g.setRowStretch(row, 1)
+        row += 1
+        g.addWidget(_divider(), row, 0, 1, 3)
+
+        row += 1
+        g.addWidget(_section("Embeddings (optional)"), row, 0, 1, 3)
+
+        row += 1
+        g.addWidget(_lbl("Embeddings model path"), row, 0)
+        self._kob_embed = QLineEdit()
+        self._kob_embed.setPlaceholderText("Leave blank to disable Vector Storage / CharMemory embeddings")
+        g.addWidget(self._kob_embed, row, 1)
+        btn_embed = QPushButton("Browse…")
+        btn_embed.setFixedWidth(72)
+        btn_embed.clicked.connect(lambda: self._browse_file(self._kob_embed, "GGUF models (*.gguf)"))
+        g.addWidget(btn_embed, row, 2)
+
+        row += 1
+        note = _lbl("A small dedicated embedding model (e.g. bge-small-en-v1.5) — needed for "
+                     "SillyTavern's Vector Storage / CharMemory to work at all with KoboldCpp; "
+                     "without one, embedding requests return empty.")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        g.addWidget(note, row, 0, 1, 3)
+
+        g.setRowStretch(row + 1, 1)
         return w
 
     # ── SillyTavern tab ───────────────────────────────────────────────
@@ -894,6 +918,7 @@ class SettingsDialog(QDialog):
         self._kob_vulkan.setChecked(bool(kob.get("use_vulkan", False)))
         self._kob_flash.setChecked(bool(kob.get("flash_attention", True)))
         self._kob_quiet.setChecked(bool(kob.get("quiet", True)))
+        self._kob_embed.setText(kob.get("embeddings_model", ""))
 
         st = self._cfg.get("sillytavern", {})
         self._st_dir.setText(st.get("dir", ""))
@@ -943,6 +968,7 @@ class SettingsDialog(QDialog):
         kob["use_vulkan"]     = self._kob_vulkan.isChecked()
         kob["flash_attention"]= self._kob_flash.isChecked()
         kob["quiet"]          = self._kob_quiet.isChecked()
+        kob["embeddings_model"] = self._kob_embed.text().strip()
 
         st = self._cfg.setdefault("sillytavern", {})
         st["dir"]  = self._st_dir.text().strip()

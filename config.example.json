@@ -20,7 +20,8 @@
         "flash_attention": true,
         "quiet":           true,
         "use_cuda":        true,
-        "use_vulkan":      false
+        "use_vulkan":      false,
+        "embeddings_model": ""
     },
     "chargen": {
         "output_dir": "C:\\Path\\To\\SillyTavern\\data\\default-user\\characters"

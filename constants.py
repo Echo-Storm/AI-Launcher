@@ -60,6 +60,9 @@ def build_kobold_args(model_path: str) -> list[str]:
         args.append("--flashattention")
     if _kob.get("quiet", True):
         args.append("--quiet")
+    embeddings_model = _kob.get("embeddings_model", "")
+    if embeddings_model:
+        args += ["--embeddingsmodel", embeddings_model]
     return args
 
 
