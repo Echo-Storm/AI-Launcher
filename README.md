@@ -136,7 +136,7 @@ A live **word count** next to the Field dropdown turns green/yellow/red as the s
 
 The **Must include** field lets you specify traits, details, or requirements that must appear in the result — for example: *"fear of enclosed spaces, dry self-deprecating humor, compulsive need to categorize things"*. Leave it blank for a free take.
 
-Either way, the result merges directly back into the card — the JSON output updates in place. You can expand, regenerate, or condense any field as many times as you like.
+Either way, the result merges directly back into the card — the corresponding field box in the Output tab updates in place. You can expand, regenerate, or condense any field as many times as you like.
 
 A **Cancel** button appears next to Generate whenever a call is in flight (Generate, Expand, Regenerate, Condense, or Portrait Prompt), so you don't have to close the whole dialog to stop a slow or stuck request.
 
@@ -152,7 +152,9 @@ The **Import Card** button loads any existing `.png` or `.json` SillyTavern char
 
 ### Output and saving
 
-**Output tab** shows the generated JSON. If parsing fails (model wrapped in markdown, etc.), the raw text is shown so you can copy and fix manually.
+**Output tab** shows each card field (Name, Description, Personality, Scenario, First Message, Dialogue Examples) as its own editable box — no raw JSON is ever shown or typed, so there's no way to break the card's syntax by hand-editing it. Type directly into any field and it's written straight back into the card; Expand/Regenerate/Condense, Save JSON, Save PNG, and Copy all see your manual edits immediately. A **● Card valid** indicator in the top-right turns red and names what's missing (name/description) if the card isn't complete enough to save yet.
+
+If a generation's response fails to parse as a card at all (model wrapped it in extra commentary, cut off mid-response, etc.), the field boxes stay empty and the raw response appears in a separate editable fallback box instead, so nothing is lost — copy it out, hand-fix it, or just try Generate again.
 
 **Save as PNG** — SillyTavern-native format. The portrait image (or a dark placeholder if none selected) is embedded alongside a base64-encoded `chara` tEXt metadata chunk containing the full v2 card spec. Drop it into ST's character folder and it appears in the character browser with portrait intact.
 

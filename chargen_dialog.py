@@ -808,13 +808,62 @@ class CharGenDialog(QDialog):
         out_vbox.setContentsMargins(10, 10, 10, 10)
         out_vbox.setSpacing(6)
 
-        out_vbox.addWidget(_lbl("Generated character card (JSON):"))
+        # Card fields — edited directly (no raw JSON shown to the user). Each
+        # widget is plain text bound to one key in self._last_card, so there is
+        # no way to type something that breaks JSON syntax; _sync_output_field
+        # writes straight into the dict on every keystroke.
+        fields_header = QHBoxLayout()
+        fields_header.addWidget(_lbl_section("Card Fields"))
+        fields_header.addStretch()
+        self._lbl_card_valid = QLabel("")
+        self._lbl_card_valid.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt; font-weight: bold;")
+        fields_header.addWidget(self._lbl_card_valid)
+        out_vbox.addLayout(fields_header)
+        out_vbox.addSpacing(4)
 
-        self.edit_output = QPlainTextEdit()
-        self.edit_output.setReadOnly(True)
-        self.edit_output.setFont(QFont(FONT_LOG_FAMILY, FONT_LOG_SIZE))
-        self.edit_output.setPlaceholderText("Generated output will appear here…")
-        out_vbox.addWidget(self.edit_output, 1)
+        def _out_field(label, widget, field_key):
+            out_vbox.addWidget(_lbl(label))
+            out_vbox.addSpacing(2)
+            out_vbox.addWidget(widget)
+            out_vbox.addSpacing(6)
+            self._output_field_widgets[field_key] = widget
+            widget.textChanged.connect(lambda: self._sync_output_field(field_key))
+
+        self._output_field_widgets = {}
+
+        self.out_name = QLineEdit()
+        self.out_name.setPlaceholderText("Name will appear here after generation")
+        _out_field("Name", self.out_name, "name")
+
+        self.out_description = _multi("Description will appear here after generation", 4)
+        _out_field("Description", self.out_description, "description")
+
+        self.out_personality = _multi("Personality will appear here after generation", 4)
+        _out_field("Personality", self.out_personality, "personality")
+
+        self.out_scenario = _multi("Scenario will appear here after generation", 3)
+        _out_field("Scenario", self.out_scenario, "scenario")
+
+        self.out_first_mes = _multi("First message will appear here after generation", 3)
+        _out_field("First Message", self.out_first_mes, "first_mes")
+
+        self.out_mes_example = _multi("Dialogue examples will appear here after generation", 3)
+        _out_field("Dialogue Examples", self.out_mes_example, "mes_example")
+
+        # Only shown when the model's response fails to parse as JSON — there's
+        # no structured card to populate the fields above with, so the raw
+        # response is surfaced here instead of being lost. Editable so a
+        # small formatting mistake can be hand-fixed and re-copied, same
+        # intent the old read-only view's error message always claimed
+        # ("...or edit manually") but never actually allowed.
+        self._lbl_raw_fallback = _lbl("Raw output (could not parse as a card — edit and copy manually, or try again):")
+        self._lbl_raw_fallback.setVisible(False)
+        out_vbox.addWidget(self._lbl_raw_fallback)
+        self._raw_fallback = QPlainTextEdit()
+        self._raw_fallback.setFont(QFont(FONT_LOG_FAMILY, FONT_LOG_SIZE))
+        self._raw_fallback.setFixedHeight(120)
+        self._raw_fallback.setVisible(False)
+        out_vbox.addWidget(self._raw_fallback)
 
         # Expand / Regenerate field row
         expand_row = QHBoxLayout()
@@ -927,7 +976,10 @@ class CharGenDialog(QDialog):
         dir_row.addWidget(self._btn_browse)
         out_vbox.addLayout(dir_row)
 
-        self._tabs.addTab(out_widget, "  Output  ")
+        out_scroll = QScrollArea()
+        out_scroll.setWidgetResizable(True)
+        out_scroll.setWidget(out_widget)
+        self._tabs.addTab(out_scroll, "  Output  ")
 
         # ── Bottom controls ───────────────────────────────────────────
 
@@ -1107,6 +1159,66 @@ class CharGenDialog(QDialog):
         self._lbl_wordcount.setText(f"{count} words")
         self._lbl_wordcount.setStyleSheet(f"color: {color}; font-size: 8pt; font-weight: bold;")
 
+    def _populate_output_fields(self):
+        """Refreshes the editable Output-tab widgets from self._last_card (or
+        clears them if there's no card). Signals are blocked during the refresh
+        so setting these values doesn't loop back into _sync_output_field."""
+        card = self._last_card or {}
+        for field_key, widget in self._output_field_widgets.items():
+            # str() guards against a malformed imported card where a field is
+            # e.g. a list instead of a string — .setText()/.setPlainText()
+            # would otherwise raise on a non-str value.
+            text = str(card.get(field_key, "") or "")
+            widget.blockSignals(True)
+            if isinstance(widget, QLineEdit):
+                widget.setText(text)
+            else:
+                widget.setPlainText(text)
+            widget.blockSignals(False)
+        self._lbl_raw_fallback.setVisible(False)
+        self._raw_fallback.setVisible(False)
+        self._update_card_validity()
+
+    def _sync_output_field(self, field_key: str):
+        """Writes a manually-edited Output-tab field straight back into
+        self._last_card on every keystroke, so Expand/Regenerate/Condense/
+        Save always see the latest manually-typed text. Since each widget only
+        ever holds a plain string bound to one dict key, there is no way for a
+        manual edit to produce invalid JSON — unlike editing raw JSON text
+        directly would risk."""
+        if self._last_card is None:
+            return
+        widget = self._output_field_widgets[field_key]
+        text = widget.text() if isinstance(widget, QLineEdit) else widget.toPlainText()
+        self._last_card[field_key] = text
+        self._update_field_wordcount()
+        self._update_card_validity()
+
+    def _update_card_validity(self):
+        """Simple health check for the editable Output fields. Syntactic JSON
+        validity is guaranteed by construction now (the user only ever types
+        into plain-text field boxes, never raw JSON), so this instead flags
+        the more useful question: does the card have the minimum SillyTavern
+        actually needs to be useful."""
+        if self._last_card is None:
+            self._lbl_card_valid.setText("")
+            return
+        missing = []
+        if not self.out_name.text().strip():
+            missing.append("name")
+        if not self.out_description.toPlainText().strip():
+            missing.append("description")
+        if missing:
+            self._lbl_card_valid.setText(f"●  Missing {', '.join(missing)}")
+            self._lbl_card_valid.setStyleSheet(
+                f"color: {COLOR_STATUS_ERROR}; font-size: 8pt; font-weight: bold;"
+            )
+        else:
+            self._lbl_card_valid.setText("●  Card valid")
+            self._lbl_card_valid.setStyleSheet(
+                f"color: {COLOR_STATUS_RUNNING}; font-size: 8pt; font-weight: bold;"
+            )
+
     def _safe_name(self) -> str:
         name = (self._last_card or {}).get("name") or self.edit_name.text().strip() or "Unknown"
         return re.sub(r'[\\/:*?"<>|]', "_", name)
@@ -1218,8 +1330,7 @@ class CharGenDialog(QDialog):
         self._last_card = _extract_json(raw)
 
         if self._last_card:
-            pretty = json.dumps(self._last_card, indent=2, ensure_ascii=False)
-            self.edit_output.setPlainText(pretty)
+            self._populate_output_fields()
             self.btn_save_json.setEnabled(True)
             self.btn_save_png.setEnabled(True)
             self._set_status(
@@ -1227,13 +1338,19 @@ class CharGenDialog(QDialog):
                 COLOR_STATUS_RUNNING,
             )
         elif raw:
-            self.edit_output.setPlainText(raw)
+            # No structured card to show in the field boxes — surface the raw
+            # response in the fallback view instead of losing it, and let the
+            # user hand-fix/copy it (previously "read-only", so "edit
+            # manually" in this message was never actually possible).
+            self._lbl_raw_fallback.setVisible(True)
+            self._raw_fallback.setVisible(True)
+            self._raw_fallback.setPlainText(raw)
             self._set_status(
-                "Could not parse JSON — raw output shown. Try regenerating or edit manually.",
+                "Could not parse JSON — raw output shown below. Try regenerating or edit manually.",
                 COLOR_STATUS_ERROR,
             )
         else:
-            self.edit_output.setPlainText("")
+            self._populate_output_fields()
             self._set_status(
                 "No content returned — model may have refused or been rate-limited.",
                 COLOR_STATUS_ERROR,
@@ -1359,9 +1476,7 @@ class CharGenDialog(QDialog):
             self._set_busy(False)
             return
         self._last_card[self._expanding_field] = raw
-        self.edit_output.setPlainText(
-            json.dumps(self._last_card, indent=2, ensure_ascii=False)
-        )
+        self._populate_output_fields()
         # Look up the label for the field actually edited (self._expanding_field,
         # captured at kickoff) rather than re-reading the combo live — if the
         # user switched Field to something else while this request was in
@@ -1621,7 +1736,7 @@ class CharGenDialog(QDialog):
             return
 
         self._last_card = card
-        self.edit_output.setPlainText(json.dumps(card, indent=2, ensure_ascii=False))
+        self._populate_output_fields()
         self.btn_copy.setEnabled(True)
         self.btn_save_json.setEnabled(True)
         self.btn_save_png.setEnabled(True)
@@ -1635,7 +1750,12 @@ class CharGenDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _copy_to_clipboard(self):
-        text = self.edit_output.toPlainText()
+        if self._last_card:
+            text = json.dumps(self._last_card, indent=2, ensure_ascii=False)
+        else:
+            # Parse-failure fallback path — no structured card, copy whatever
+            # raw text is shown there instead.
+            text = self._raw_fallback.toPlainText()
         if text:
             QApplication.clipboard().setText(text)
             self._set_status("Copied to clipboard.", COLOR_STATUS_RUNNING)
