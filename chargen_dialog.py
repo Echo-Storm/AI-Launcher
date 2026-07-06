@@ -328,13 +328,14 @@ class _GenerateWorker(QThread):
     error    = pyqtSignal(str)
 
     def __init__(self, api_base: str, messages: list, temperature: float,
-                 api_key: str = "", model: str = "", parent=None):
+                 api_key: str = "", model: str = "", max_tokens: int = 4096, parent=None):
         super().__init__(parent)
         self._api_base    = api_base
         self._messages    = messages
         self._temperature = temperature
         self._api_key     = api_key
         self._model       = model
+        self._max_tokens  = max_tokens
 
     def run(self):
         import urllib.request
@@ -342,7 +343,7 @@ class _GenerateWorker(QThread):
 
         payload_dict = {
             "messages":    self._messages,
-            "max_tokens":  4096,
+            "max_tokens":  self._max_tokens,
             "temperature": self._temperature,
             "stream":      False,
         }
@@ -985,7 +986,7 @@ class CharGenDialog(QDialog):
             if self._last_card is None:
                 self._set_status("Fill in a concept and click Generate.", COLOR_TEXT_MUTED)
             return
-        if model_key and model_key != "chargen" and self._last_card is None:
+        if model_key and model_key != "chargen":
             self._set_status(
                 "Note: general model loaded — CharGen model gives better card results.",
                 COLOR_STATUS_STARTING,
@@ -1048,16 +1049,45 @@ class CharGenDialog(QDialog):
     def _set_busy(self, busy: bool):
         """Central button-state switch for any in-flight worker (generate/expand/
         condense/portrait prompt). Keeps btn_generate, _btn_expand, _btn_regenerate,
-        _btn_condense, _btn_portrait_prompt, and btn_cancel in sync so no completion
-        path can leave one out of step."""
+        _btn_condense, _btn_portrait_prompt, _btn_import, and btn_cancel in sync so
+        no completion path can leave one out of step. _btn_import is included so
+        importing a card can't race a still-running worker's completion handler
+        into overwriting the freshly-imported card with stale results."""
         has_card = self._last_card is not None
         self.btn_generate.setEnabled(not busy)
         self._btn_expand.setEnabled(has_card and not busy)
         self._btn_regenerate.setEnabled(has_card and not busy)
         self._btn_condense.setEnabled(has_card and not busy)
         self._btn_portrait_prompt.setEnabled(has_card and not busy)
+        self._btn_import.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
         self.btn_cancel.setVisible(busy)
+
+    def _resolve_backend(self):
+        """Returns (api_base, api_key, model) for whichever backend is currently
+        active — shared by every action that talks to _GenerateWorker instead of
+        each one re-deriving it independently."""
+        backend = self._combo_backend.currentData() if self._combo_backend else "local"
+        if backend == "api":
+            return API_BASE_URL, API_KEY, self._current_api_model
+        return self._api_base, "", ""
+
+    def _content_rating_suffix(self) -> str:
+        return _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
+
+    def _launch_worker(self, messages: list, on_done, max_tokens: int = 4096):
+        """Resolves backend/temperature, constructs and wires a _GenerateWorker,
+        and stores it on self._worker — shared by every generate/expand/
+        regenerate/condense/portrait-prompt action."""
+        api_base, api_key, model = self._resolve_backend()
+        temperature = self._slider_temp.value() / 100.0
+        self._worker = _GenerateWorker(
+            api_base, messages, temperature,
+            api_key=api_key, model=model, max_tokens=max_tokens, parent=self,
+        )
+        self._worker.finished.connect(on_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
 
     def _set_status(self, text: str, color: str = COLOR_TEXT_MUTED):
         self._lbl_status.setText(text)
@@ -1171,31 +1201,17 @@ class CharGenDialog(QDialog):
             {"role": "user",   "content": _build_user_prompt(fields)},
         ]
 
-        temperature = self._slider_temp.value() / 100.0
-
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
-            api_base = API_BASE_URL
-            api_key  = API_KEY
-            model    = self._current_api_model
-        else:
-            api_base = self._api_base
-            api_key  = ""
-            model    = ""
-
         self.btn_copy.setEnabled(False)
         self.btn_save_json.setEnabled(False)
         self.btn_save_png.setEnabled(False)
         self._set_busy(True)
         self._set_status("Generating… this may take a minute.", COLOR_STATUS_STARTING)
 
-        self._worker = _GenerateWorker(
-            api_base, messages, temperature,
-            api_key=api_key, model=model, parent=self,
-        )
-        self._worker.finished.connect(self._on_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        # Full-card generation can populate up to 6 fields at once (more with
+        # Distinctive/NSFW encouraging longer prose) — a bigger budget than the
+        # single-field edit actions below need, so it doesn't risk truncating
+        # mid-JSON the way the shared 4096 default would.
+        self._launch_worker(messages, self._on_done, max_tokens=8192)
 
     def _on_done(self, raw: str):
         self._worker = None
@@ -1239,7 +1255,7 @@ class CharGenDialog(QDialog):
 
         field_key = self._expand_combo.currentData()
         sys_prompt, user_instruction = _EXPAND_CONFIG[field_key]
-        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
+        sys_prompt += self._content_rating_suffix()
         must_include = self._edit_must_include.text().strip()
 
         user_content = (
@@ -1254,13 +1270,6 @@ class CharGenDialog(QDialog):
             {"role": "user",   "content": user_content},
         ]
 
-        temperature = self._slider_temp.value() / 100.0
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
-            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
-        else:
-            api_base, api_key, model = self._api_base, "", ""
-
         self._expanding_field = field_key
         self._expanding_verb  = "expanded"
         self._set_busy(True)
@@ -1268,14 +1277,7 @@ class CharGenDialog(QDialog):
             f"Expanding {self._expand_combo.currentText().lower()}…",
             COLOR_STATUS_STARTING,
         )
-
-        self._worker = _GenerateWorker(
-            api_base, messages, temperature,
-            api_key=api_key, model=model, parent=self,
-        )
-        self._worker.finished.connect(self._on_expand_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        self._launch_worker(messages, self._on_expand_done)
 
     def _regenerate_field(self):
         """Discard the current value of the selected field and request a fresh
@@ -1286,7 +1288,7 @@ class CharGenDialog(QDialog):
 
         field_key = self._expand_combo.currentData()
         sys_prompt, user_instruction = _REGENERATE_CONFIG[field_key]
-        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
+        sys_prompt += self._content_rating_suffix()
         must_include = self._edit_must_include.text().strip()
 
         context_card = {k: v for k, v in self._last_card.items() if k != field_key}
@@ -1303,13 +1305,6 @@ class CharGenDialog(QDialog):
             {"role": "user",   "content": user_content},
         ]
 
-        temperature = self._slider_temp.value() / 100.0
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
-            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
-        else:
-            api_base, api_key, model = self._api_base, "", ""
-
         self._expanding_field = field_key
         self._expanding_verb  = "regenerated"
         self._set_busy(True)
@@ -1317,14 +1312,7 @@ class CharGenDialog(QDialog):
             f"Regenerating {self._expand_combo.currentText().lower()}…",
             COLOR_STATUS_STARTING,
         )
-
-        self._worker = _GenerateWorker(
-            api_base, messages, temperature,
-            api_key=api_key, model=model, parent=self,
-        )
-        self._worker.finished.connect(self._on_expand_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        self._launch_worker(messages, self._on_expand_done)
 
     def _condense_field(self):
         """Tighten the current field to the selected target length instead of
@@ -1337,7 +1325,7 @@ class CharGenDialog(QDialog):
         field_key = self._expand_combo.currentData()
         length_key = self._condense_length.currentData()
         sys_prompt, user_template = _CONDENSE_CONFIG[field_key]
-        sys_prompt += _NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE
+        sys_prompt += self._content_rating_suffix()
         target = _FIELD_LENGTH_TARGETS[field_key][length_key]
         user_instruction = user_template.format(target=target)
         must_include = self._edit_must_include.text().strip()
@@ -1354,13 +1342,6 @@ class CharGenDialog(QDialog):
             {"role": "user",   "content": user_content},
         ]
 
-        temperature = self._slider_temp.value() / 100.0
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
-            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
-        else:
-            api_base, api_key, model = self._api_base, "", ""
-
         self._expanding_field = field_key
         self._expanding_verb  = "condensed"
         self._set_busy(True)
@@ -1368,14 +1349,7 @@ class CharGenDialog(QDialog):
             f"Condensing {self._expand_combo.currentText().lower()} (~{target} words)…",
             COLOR_STATUS_STARTING,
         )
-
-        self._worker = _GenerateWorker(
-            api_base, messages, temperature,
-            api_key=api_key, model=model, parent=self,
-        )
-        self._worker.finished.connect(self._on_expand_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        self._launch_worker(messages, self._on_expand_done)
 
     def _on_expand_done(self, raw: str):
         self._worker = None
@@ -1388,7 +1362,13 @@ class CharGenDialog(QDialog):
         self.edit_output.setPlainText(
             json.dumps(self._last_card, indent=2, ensure_ascii=False)
         )
-        label = self._expand_combo.currentText()
+        # Look up the label for the field actually edited (self._expanding_field,
+        # captured at kickoff) rather than re-reading the combo live — if the
+        # user switched Field to something else while this request was in
+        # flight, the combo's current selection is no longer the field that was
+        # just written, and would report the wrong name here.
+        combo_idx = self._expand_combo.findData(self._expanding_field)
+        label = self._expand_combo.itemText(combo_idx) if combo_idx >= 0 else self._expanding_field
         self._set_status(f"{label} {self._expanding_verb}.", COLOR_STATUS_RUNNING)
         self._update_field_wordcount()
         self._set_busy(False)
@@ -1401,7 +1381,7 @@ class CharGenDialog(QDialog):
             "You are an expert at writing image generation prompts for AI art tools "
             "like Stable Diffusion and Midjourney. You write detailed, evocative portrait "
             "prompts using comma-separated descriptors. "
-        ) + (_NSFW_ALLOWED if self.chk_nsfw.isChecked() else _SFW_SAFE)
+        ) + self._content_rating_suffix()
 
         messages = [
             {"role": "system", "content": portrait_sys_prompt},
@@ -1415,23 +1395,9 @@ class CharGenDialog(QDialog):
             )},
         ]
 
-        temperature = self._slider_temp.value() / 100.0
-        backend = self._combo_backend.currentData() if self._combo_backend else "local"
-        if backend == "api":
-            api_base, api_key, model = API_BASE_URL, API_KEY, self._current_api_model
-        else:
-            api_base, api_key, model = self._api_base, "", ""
-
         self._set_busy(True)
         self._set_status("Generating portrait prompt…", COLOR_STATUS_STARTING)
-
-        self._worker = _GenerateWorker(
-            api_base, messages, temperature,
-            api_key=api_key, model=model, parent=self,
-        )
-        self._worker.finished.connect(self._on_portrait_prompt_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        self._launch_worker(messages, self._on_portrait_prompt_done)
 
     def _on_portrait_prompt_done(self, raw: str):
         self._worker = None
