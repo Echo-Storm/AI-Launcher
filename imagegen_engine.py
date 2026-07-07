@@ -223,10 +223,22 @@ def with_pipeline(fn):
     with _lock:
         if "pipe" not in _pipe_cache:
             _load_locked()
-        return fn(
-            _pipe_cache["pipe"], _pipe_cache["img2img"],
-            _pipe_cache["upscaler"], _pipe_cache["device"],
-        )
+        try:
+            return fn(
+                _pipe_cache["pipe"], _pipe_cache["img2img"],
+                _pipe_cache["upscaler"], _pipe_cache["device"],
+            )
+        except torch.cuda.OutOfMemoryError:
+            # A failed CUDA allocation leaves the allocator's memory pool
+            # fragmented, so every generation after this one would also OOM
+            # (even at sizes that normally fit) until it's cleared here.
+            gc.collect()
+            torch.cuda.empty_cache()
+            raise RuntimeError(
+                "Out of GPU memory. Try a smaller resolution, fewer steps, or a "
+                "lower hires-fix scale, and close other GPU-heavy apps (e.g. "
+                "KoboldCpp) if one is loaded alongside this."
+            ) from None
 
 
 def try_unload_pipeline() -> bool:

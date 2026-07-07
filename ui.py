@@ -831,10 +831,21 @@ class MainWindow(QMainWindow):
             self._kobold_stopping = True
             pid = self._kobold_proc.processId()
             if pid:
-                subprocess.Popen(
-                    ['taskkill', '/F', '/T', '/PID', str(pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
+                # koboldcpp.exe is a PyInstaller onefile bootloader — QProcess's
+                # PID is the bootloader, not the actual inference/server child
+                # it launches. taskkill /T (tree-kill) is what actually reaches
+                # that child, so it must run to completion *before* we consider
+                # the stop done, or the child can survive as an orphan holding
+                # the GPU/VRAM and the port. Bounded wait so a stuck/missing
+                # taskkill can't hang the UI indefinitely.
+                try:
+                    subprocess.run(
+                        ['taskkill', '/F', '/T', '/PID', str(pid)],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
             self._kobold_proc.kill()
         self._kobold_ready = False
         self.kobold_card.btn_stop.setEnabled(False)
