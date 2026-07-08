@@ -207,12 +207,33 @@ def _load_locked():
     _pipe_cache["ti_tokens"] = loaded_ti_tokens
 
 
+_OOM_MESSAGE = (
+    "Out of GPU memory. Try a smaller resolution, fewer steps, or a lower "
+    "hires-fix scale, and close other GPU-heavy apps (e.g. KoboldCpp) if one "
+    "is loaded alongside this."
+)
+
+
+def _reclaim_gpu_memory():
+    """Clears the fragmented-but-unused memory a failed CUDA allocation
+    leaves behind — without this, every generation after an OOM (even at
+    sizes that normally fit) would also OOM until this is run. Shared by
+    every OOM-recovery path and by the explicit Unload button."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def load_pipeline():
     """Blocking load — safe to call from multiple threads; only the first
     actually loads, the rest just wait and then see it already cached."""
     with _lock:
         if "pipe" not in _pipe_cache:
-            _load_locked()
+            try:
+                _load_locked()
+            except torch.cuda.OutOfMemoryError:
+                _reclaim_gpu_memory()
+                raise RuntimeError(_OOM_MESSAGE) from None
 
 
 def with_pipeline(fn):
@@ -221,24 +242,16 @@ def with_pipeline(fn):
     that touches the pipeline objects — never read _pipe_cache directly —
     so a generation can't be unloaded out from under itself mid-run."""
     with _lock:
-        if "pipe" not in _pipe_cache:
-            _load_locked()
         try:
+            if "pipe" not in _pipe_cache:
+                _load_locked()
             return fn(
                 _pipe_cache["pipe"], _pipe_cache["img2img"],
                 _pipe_cache["upscaler"], _pipe_cache["device"],
             )
         except torch.cuda.OutOfMemoryError:
-            # A failed CUDA allocation leaves the allocator's memory pool
-            # fragmented, so every generation after this one would also OOM
-            # (even at sizes that normally fit) until it's cleared here.
-            gc.collect()
-            torch.cuda.empty_cache()
-            raise RuntimeError(
-                "Out of GPU memory. Try a smaller resolution, fewer steps, or a "
-                "lower hires-fix scale, and close other GPU-heavy apps (e.g. "
-                "KoboldCpp) if one is loaded alongside this."
-            ) from None
+            _reclaim_gpu_memory()
+            raise RuntimeError(_OOM_MESSAGE) from None
 
 
 def try_unload_pipeline() -> bool:
@@ -253,9 +266,7 @@ def try_unload_pipeline() -> bool:
         _pipe_cache.pop("upscaler", None)
         _pipe_cache.pop("device", None)
         _pipe_cache.pop("ti_tokens", None)
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _reclaim_gpu_memory()
         return True
     finally:
         _lock.release()

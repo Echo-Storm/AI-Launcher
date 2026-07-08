@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import webbrowser
 
 from PyQt6.QtCore    import Qt, QProcess, QProcessEnvironment, QThread, pyqtSignal
@@ -826,26 +827,36 @@ class MainWindow(QMainWindow):
         proc.start()
         self._kobold_proc = proc
 
-    def _stop_kobold(self):
+    def _tree_kill(self, pid: int, wait: bool = False):
+        """taskkill /T (tree-kill) — needed because koboldcpp.exe (a PyInstaller
+        onefile bootloader) and SillyTavern's node.exe can both spawn a real
+        worker child that QProcess's own PID doesn't reach; .kill() alone can
+        leave that child orphaned holding the GPU/VRAM or the port. Async by
+        default (fire on a background thread and return immediately) to match
+        this app's "stops are async" architecture — pass wait=True only from
+        closeEvent, which is the one place allowed to block briefly on exit
+        to guarantee the tree-kill actually completes before the app quits."""
+        def _run():
+            try:
+                subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except (subprocess.TimeoutExpired, OSError) as e:
+                log.warning(f"taskkill /T /PID {pid} failed or timed out: {e}")
+
+        if wait:
+            _run()
+        else:
+            threading.Thread(target=_run, daemon=True).start()
+
+    def _stop_kobold(self, wait: bool = False):
         if self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning:
             self._kobold_stopping = True
             pid = self._kobold_proc.processId()
             if pid:
-                # koboldcpp.exe is a PyInstaller onefile bootloader — QProcess's
-                # PID is the bootloader, not the actual inference/server child
-                # it launches. taskkill /T (tree-kill) is what actually reaches
-                # that child, so it must run to completion *before* we consider
-                # the stop done, or the child can survive as an orphan holding
-                # the GPU/VRAM and the port. Bounded wait so a stuck/missing
-                # taskkill can't hang the UI indefinitely.
-                try:
-                    subprocess.run(
-                        ['taskkill', '/F', '/T', '/PID', str(pid)],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        timeout=5,
-                    )
-                except (subprocess.TimeoutExpired, OSError):
-                    pass
+                self._tree_kill(pid, wait=wait)
             self._kobold_proc.kill()
         self._kobold_ready = False
         self.kobold_card.btn_stop.setEnabled(False)
@@ -933,15 +944,12 @@ class MainWindow(QMainWindow):
         proc.start()
         self._st_proc = proc
 
-    def _stop_st(self):
+    def _stop_st(self, wait: bool = False):
         if self._st_proc and self._st_proc.state() != QProcess.ProcessState.NotRunning:
             self._st_stopping = True
             pid = self._st_proc.processId()
             if pid:
-                subprocess.Popen(
-                    ['taskkill', '/F', '/T', '/PID', str(pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
+                self._tree_kill(pid, wait=wait)
             self._st_proc.kill()
         self._st_ready = False
         self.btn_st_stop.setEnabled(False)
@@ -1209,8 +1217,8 @@ class MainWindow(QMainWindow):
         if self.api_card._worker and self.api_card._worker.isRunning():
             self.api_card._worker.terminate()
             self.api_card._worker.wait(2000)
-        self._stop_kobold()
-        self._stop_st()
+        self._stop_kobold(wait=True)
+        self._stop_st(wait=True)
         self._stop_imagegen_local()
         # Brief wait to let processes actually exit before the app quits
         if self._kobold_proc:
