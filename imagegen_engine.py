@@ -133,6 +133,14 @@ def _load_locked():
     from spandrel import ModelLoader
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        log.warning(
+            "No CUDA GPU detected by torch — SDXL will run on CPU, which is "
+            "dramatically slower (minutes instead of seconds per image). If "
+            "you have an NVIDIA GPU, torch was likely installed from plain "
+            "PyPI instead of the CUDA build: pip install torch --index-url "
+            "https://download.pytorch.org/whl/cu130 --force-reinstall"
+        )
     pipe = StableDiffusionXLPipeline.from_single_file(
         SDXL_MODEL_PATH, torch_dtype=torch.float16, use_safetensors=True,
     ).to(device)
