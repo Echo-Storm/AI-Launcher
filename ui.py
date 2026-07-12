@@ -394,6 +394,8 @@ class MainWindow(QMainWindow):
         self._st_job            = None
         self._kobold_ready      = False
         self._st_ready          = False
+        self._kobold_ready_buf  = ""
+        self._st_ready_buf      = ""
         self._kobold_stopping   = False
         self._st_stopping       = False
         self._current_model_key = None
@@ -811,6 +813,7 @@ class MainWindow(QMainWindow):
 
         self._current_model_key = model_key
         self._kobold_ready = False
+        self._kobold_ready_buf = ""
         self.kobold_card.status.set_starting()
         self.kobold_card.lbl_subtitle.setText(f"Loading  {model_name}…")
         self.kobold_card.lbl_subtitle.setVisible(True)
@@ -827,6 +830,7 @@ class MainWindow(QMainWindow):
         proc.readyReadStandardOutput.connect(self._on_kobold_stdout)
         proc.readyReadStandardError.connect(self._on_kobold_stderr)
         proc.finished.connect(self._on_kobold_finished)
+        proc.errorOccurred.connect(self._on_kobold_error)
         proc.start()
         self._kobold_proc = proc
         self._kobold_job = JobObject()
@@ -889,7 +893,12 @@ class MainWindow(QMainWindow):
     def _check_kobold_ready(self, text: str):
         if self._kobold_ready:
             return
-        if any(s in text.lower() for s in KOBOLD_READY_STRINGS):
+        # Buffered across calls — the ready marker can arrive split across
+        # two separate stdout/stderr reads (pipe buffering under load), and
+        # checking only the latest chunk in isolation would miss that.
+        # Bounded tail-keep so this can't grow unbounded over a long run.
+        self._kobold_ready_buf = (self._kobold_ready_buf + text.lower())[-512:]
+        if any(s in self._kobold_ready_buf for s in KOBOLD_READY_STRINGS):
             self._kobold_ready = True
             self.kobold_card.status.set_running()
             m = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
@@ -897,6 +906,20 @@ class MainWindow(QMainWindow):
             self.kobold_card.lbl_subtitle.setText(model_name)
             self._log_kobold(f"Ready — {model_name}")
             self._update_tools()
+
+    def _on_kobold_error(self, error):
+        # QProcess never emits `finished` for FailedToStart — without this,
+        # a corrupted/AV-blocked exe would leave the card stuck on
+        # "Starting…" forever with Start disabled and Stop a no-op, since
+        # _on_kobold_finished (the only place that resets that state) would
+        # never run. Other error types (Crashed, Timedout, ...) still get a
+        # real `finished` signal afterward, so just log those instead of
+        # double-handling.
+        if error == QProcess.ProcessError.FailedToStart:
+            self._log_kobold("ERROR: Process failed to start (missing, corrupted, or blocked by antivirus).")
+            self._on_kobold_finished(-1, QProcess.ExitStatus.CrashExit)
+        else:
+            self._log_kobold(f"Process error: {error}")
 
     def _on_kobold_finished(self, exit_code: int, exit_status):
         # koboldcpp.exe is a PyInstaller bootloader — this signal firing only
@@ -943,6 +966,7 @@ class MainWindow(QMainWindow):
             return
 
         self._st_ready = False
+        self._st_ready_buf = ""
         self.st_status.set_starting()
         self.btn_st_start.setEnabled(False)
         self.btn_st_stop.setEnabled(True)
@@ -966,6 +990,7 @@ class MainWindow(QMainWindow):
         proc.readyReadStandardOutput.connect(self._on_st_stdout)
         proc.readyReadStandardError.connect(self._on_st_stderr)
         proc.finished.connect(self._on_st_finished)
+        proc.errorOccurred.connect(self._on_st_error)
         proc.start()
         self._st_proc = proc
         self._st_job = JobObject()
@@ -1001,12 +1026,20 @@ class MainWindow(QMainWindow):
     def _check_st_ready(self, text: str):
         if self._st_ready:
             return
-        if any(s in text.lower() for s in SILLYTAVERN_READY_STRINGS):
+        self._st_ready_buf = (self._st_ready_buf + text.lower())[-512:]
+        if any(s in self._st_ready_buf for s in SILLYTAVERN_READY_STRINGS):
             self._st_ready = True
             self.st_status.set_running()
             self.btn_st_open.setEnabled(True)
             self._log_st("Ready.")
             self._update_tools()
+
+    def _on_st_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self._log_st("ERROR: Process failed to start (node.exe missing, corrupted, or blocked).")
+            self._on_st_finished(-1, QProcess.ExitStatus.CrashExit)
+        else:
+            self._log_st(f"Process error: {error}")
 
     def _on_st_finished(self, exit_code: int, exit_status):
         if not self._st_stopping and self._st_job:
