@@ -7,7 +7,7 @@ import subprocess
 import threading
 import webbrowser
 
-from PyQt6.QtCore    import Qt, QProcess, QProcessEnvironment, QThread, pyqtSignal
+from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QApplication,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 import imagegen_engine
 import imagegen_server
 from constants import *
+from winjob import JobObject
 
 log = logging.getLogger(__name__)
 
@@ -389,6 +390,8 @@ class MainWindow(QMainWindow):
 
         self._kobold_proc       = None
         self._st_proc           = None
+        self._kobold_job        = None
+        self._st_job            = None
         self._kobold_ready      = False
         self._st_ready          = False
         self._kobold_stopping   = False
@@ -826,6 +829,8 @@ class MainWindow(QMainWindow):
         proc.finished.connect(self._on_kobold_finished)
         proc.start()
         self._kobold_proc = proc
+        self._kobold_job = JobObject()
+        proc.started.connect(lambda: self._kobold_job.assign(proc.processId()))
 
     def _tree_kill(self, pid: int, wait: bool = False):
         """taskkill /T (tree-kill) — needed because koboldcpp.exe (a PyInstaller
@@ -855,6 +860,12 @@ class MainWindow(QMainWindow):
         if self._kobold_proc and self._kobold_proc.state() != QProcess.ProcessState.NotRunning:
             self._kobold_stopping = True
             pid = self._kobold_proc.processId()
+            # Job-object terminate() is the reliable primary kill — it acts on
+            # our still-open handle, not a PID, so it can't go stale the way
+            # taskkill can. _tree_kill stays as defense-in-depth (e.g. if job
+            # creation itself failed for some reason).
+            if self._kobold_job:
+                self._kobold_job.terminate()
             if pid:
                 self._tree_kill(pid, wait=wait)
             self._kobold_proc.kill()
@@ -888,6 +899,20 @@ class MainWindow(QMainWindow):
             self._update_tools()
 
     def _on_kobold_finished(self, exit_code: int, exit_status):
+        # koboldcpp.exe is a PyInstaller bootloader — this signal firing only
+        # means THAT PID exited, not that its real worker child did too. If
+        # we didn't request this stop ourselves, the bootloader may have
+        # crashed or been killed externally while a live child survives it;
+        # taskkill /T can't reach that child once the bootloader PID is
+        # already gone (it needs a live root to walk the tree from), but
+        # TerminateJobObject acts on our still-open handle regardless of
+        # whether the originally-assigned PID has already exited — so it's
+        # the one mechanism that can still catch this case.
+        if not self._kobold_stopping and self._kobold_job:
+            self._kobold_job.terminate()
+        if self._kobold_job:
+            self._kobold_job.close()
+            self._kobold_job = None
         self._kobold_ready = False
         self._current_model_key = None
         if self._kobold_stopping or exit_code == 0:
@@ -943,11 +968,15 @@ class MainWindow(QMainWindow):
         proc.finished.connect(self._on_st_finished)
         proc.start()
         self._st_proc = proc
+        self._st_job = JobObject()
+        proc.started.connect(lambda: self._st_job.assign(proc.processId()))
 
     def _stop_st(self, wait: bool = False):
         if self._st_proc and self._st_proc.state() != QProcess.ProcessState.NotRunning:
             self._st_stopping = True
             pid = self._st_proc.processId()
+            if self._st_job:
+                self._st_job.terminate()
             if pid:
                 self._tree_kill(pid, wait=wait)
             self._st_proc.kill()
@@ -980,6 +1009,11 @@ class MainWindow(QMainWindow):
             self._update_tools()
 
     def _on_st_finished(self, exit_code: int, exit_status):
+        if not self._st_stopping and self._st_job:
+            self._st_job.terminate()
+        if self._st_job:
+            self._st_job.close()
+            self._st_job = None
         self._st_ready = False
         if self._st_stopping or exit_code == 0:
             self.st_status.set_stopped()
