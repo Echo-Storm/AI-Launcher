@@ -22,17 +22,37 @@ except FileNotFoundError:
 except json.JSONDecodeError as _e:
     raise SystemExit(f"ERROR: config.json is invalid JSON: {_e}")
 
-_kob = _cfg.get("koboldcpp", {})
-_st  = _cfg.get("sillytavern", {})
-_cg  = _cfg.get("chargen", {})
-_api = _cfg.get("api", {})
-_sdxl = _cfg.get("sdxl", {})
+if not isinstance(_cfg, dict):
+    raise SystemExit(f"ERROR: config.json must be a JSON object, got {type(_cfg).__name__}")
+
+
+def _dict_section(key: str) -> dict:
+    """A section present but with the wrong type (e.g. hand-edited to null)
+    falls back to {} — same graceful-default treatment as a missing section
+    — rather than crashing the whole app before the window ever shows."""
+    val = _cfg.get(key, {})
+    return val if isinstance(val, dict) else {}
+
+
+_kob = _dict_section("koboldcpp")
+_st  = _dict_section("sillytavern")
+_cg  = _dict_section("chargen")
+_api = _dict_section("api")
+_sdxl = _dict_section("sdxl")
 
 # ---------------------------------------------------------------------------
 # Models list — first entry is the startup default
 # ---------------------------------------------------------------------------
 
-MODELS: list[dict] = _cfg.get("models", [])
+_raw_models = _cfg.get("models", [])
+if not isinstance(_raw_models, list):
+    _raw_models = []
+MODELS: list[dict] = []
+for _m in _raw_models:
+    if isinstance(_m, dict) and _m.get("name") and _m.get("path"):
+        MODELS.append(_m)
+    else:
+        print(f"WARNING: skipping malformed models entry in config.json: {_m!r}")
 
 # ---------------------------------------------------------------------------
 # KoboldCpp
