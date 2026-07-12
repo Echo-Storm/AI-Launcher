@@ -130,7 +130,7 @@ After a card is generated, the **Field** dropdown lets you select Personality, S
 
 - **Expand** makes the current text more detailed, keeping its existing direction — the full character card (including that field's current value) is sent as context so the result stays coherent with what's already there.
 - **Regenerate** discards the current text and writes a fresh alternative take — the field's current value is deliberately left out of the prompt so the model isn't anchored to it, while the rest of the card is still included for context.
-- **Condense** tightens an over-long field down to a **Short / Medium / Long** target instead of dropping content wholesale — it cuts filler, repetition, and throat-clearing while keeping every distinct trait and detail. Useful when Expand (or a naturally verbose model) leaves a field so long it eats into your actual roleplay context.
+- **Condense** tightens an over-long field down to a **Short / Medium / Long** target instead of dropping content wholesale — it cuts filler, repetition, and throat-clearing while keeping every distinct trait and detail. Useful when Expand (or a naturally verbose model) leaves a field so long it eats into your actual roleplay context. An **Undo** button next to Condense restores the field's text from just before the last condense, in case it cut too much.
 
 A live **word count** next to the Field dropdown turns green/yellow/red as the selected field grows — yellow roughly means "longer than Condense-Medium would produce," red means "longer than even Condense-Long."
 
@@ -153,6 +153,8 @@ The **Import Card** button loads any existing `.png` or `.json` SillyTavern char
 ### Output and saving
 
 **Output tab** shows each card field (Name, Description, Personality, Scenario, First Message, Dialogue Examples) as its own editable box — no raw JSON is ever shown or typed, so there's no way to break the card's syntax by hand-editing it. Type directly into any field and it's written straight back into the card; Expand/Regenerate/Condense, Save JSON, Save PNG, and Copy all see your manual edits immediately. A **● Card valid** indicator in the top-right turns red and names what's missing (name/description) if the card isn't complete enough to save yet.
+
+An **Alternate Greetings** box lets you add extra opening messages the user can swipe between in SillyTavern — type each one separated by a line containing just `---`.
 
 If a generation's response fails to parse as a card at all (model wrapped it in extra commentary, cut off mid-response, etc.), the field boxes stay empty and the raw response appears in a separate editable fallback box instead, so nothing is lost — copy it out, hand-fix it, or just try Generate again.
 
