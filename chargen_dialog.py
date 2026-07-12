@@ -1125,6 +1125,15 @@ class CharGenDialog(QDialog):
         self._btn_import.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
         self.btn_cancel.setVisible(busy)
+        # Restores Copy/Save on any non-success completion path (error,
+        # cancel) that leaves a still-valid prior card in place — only
+        # _on_done's success branch used to re-enable these, so an error or
+        # cancel after a valid Generate left them stuck disabled forever
+        # even though self._last_card still held perfectly good data.
+        if not busy:
+            self.btn_copy.setEnabled(has_card)
+            self.btn_save_json.setEnabled(has_card)
+            self.btn_save_png.setEnabled(has_card)
 
     def _backend_kind(self) -> str:
         return self._combo_backend.currentData() if self._combo_backend else "local"
@@ -1356,10 +1365,10 @@ class CharGenDialog(QDialog):
             # response in the fallback view instead of losing it, and let the
             # user hand-fix/copy it (previously "read-only", so "edit
             # manually" in this message was never actually possible).
+            self._populate_output_fields()
             self._lbl_raw_fallback.setVisible(True)
             self._raw_fallback.setVisible(True)
             self._raw_fallback.setPlainText(raw)
-            self._update_card_validity()
             self._set_status(
                 "Could not parse JSON — raw output shown below. Try regenerating or edit manually.",
                 COLOR_STATUS_ERROR,
@@ -1751,6 +1760,10 @@ class CharGenDialog(QDialog):
             return
 
         self._last_card = card
+        # Otherwise a leftover portrait from whatever card was loaded before
+        # this import silently carries over and gets re-embedded into the
+        # newly-imported card on the next Save PNG.
+        self._clear_portrait()
         self._populate_output_fields()
         self.btn_copy.setEnabled(True)
         self.btn_save_json.setEnabled(True)
