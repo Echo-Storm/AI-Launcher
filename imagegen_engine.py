@@ -60,11 +60,6 @@ def _to_bool(value, default: bool = True) -> bool:
     return bool(value)
 
 
-def is_loaded() -> bool:
-    with _lock:
-        return "pipe" in _pipe_cache
-
-
 def is_busy() -> bool:
     """True while _lock is held — i.e. a pipeline load or an in-flight
     generation is running. Non-blocking, safe to call from the GUI thread
@@ -232,16 +227,29 @@ def _reclaim_gpu_memory():
         torch.cuda.empty_cache()
 
 
+def _load_locked_with_reclaim():
+    """Wraps _load_locked() so ANY load failure (OOM, or a corrupt/incompatible
+    LoRA/upscaler file — the LoRA/upscaler loads aren't try/except-guarded
+    inside _load_locked() itself) reclaims GPU memory from the partially-built
+    pipeline before propagating. Without this, a bad LoRA file leaks/fragments
+    memory on every single retry even though no individual attempt is itself
+    an OOM."""
+    try:
+        _load_locked()
+    except torch.cuda.OutOfMemoryError:
+        _reclaim_gpu_memory()
+        raise RuntimeError(_OOM_MESSAGE) from None
+    except Exception:
+        _reclaim_gpu_memory()
+        raise
+
+
 def load_pipeline():
     """Blocking load — safe to call from multiple threads; only the first
     actually loads, the rest just wait and then see it already cached."""
     with _lock:
         if "pipe" not in _pipe_cache:
-            try:
-                _load_locked()
-            except torch.cuda.OutOfMemoryError:
-                _reclaim_gpu_memory()
-                raise RuntimeError(_OOM_MESSAGE) from None
+            _load_locked_with_reclaim()
 
 
 def with_pipeline(fn):
@@ -250,9 +258,9 @@ def with_pipeline(fn):
     that touches the pipeline objects — never read _pipe_cache directly —
     so a generation can't be unloaded out from under itself mid-run."""
     with _lock:
+        if "pipe" not in _pipe_cache:
+            _load_locked_with_reclaim()
         try:
-            if "pipe" not in _pipe_cache:
-                _load_locked()
             return fn(
                 _pipe_cache["pipe"], _pipe_cache["img2img"],
                 _pipe_cache["upscaler"], _pipe_cache["device"],

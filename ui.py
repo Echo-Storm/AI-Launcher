@@ -312,12 +312,12 @@ QPushButton#accent:hover:enabled {{
     background: {COLOR_ACCENT};
 }}
 QPushButton#danger {{
-    background: #3d1a1a;
+    background: {COLOR_DANGER_BG};
     border-color: {COLOR_STATUS_ERROR};
     color: {COLOR_STATUS_ERROR};
 }}
 QPushButton#danger:hover:enabled {{
-    background: #5a2020;
+    background: {COLOR_DANGER_BG_HOVER};
 }}
 QTextEdit {{
     background: {COLOR_PANEL};
@@ -451,7 +451,7 @@ class MainWindow(QMainWindow):
         btn_donate.setFont(QFont(FONT_UI_FAMILY, 8))
         btn_donate.setStyleSheet(
             "background: transparent; border: none;"
-            " color: #c0665a; padding: 1px 4px;"
+            f" color: {COLOR_DONATE_LINK}; padding: 1px 4px;"
         )
         btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_donate.clicked.connect(
@@ -499,6 +499,9 @@ class MainWindow(QMainWindow):
             model_items=[(m["name"], m.get("key", "")) for m in MODELS],
         )
         self.api_card = ApiCard()
+        # CLAUDE.md: "The api block is optional — omit it to hide the API
+        # card entirely." ApiCard() was always constructed/shown regardless.
+        self.api_card.setVisible(bool(API_BASE_URL))
 
         backends_row.addWidget(self.kobold_card, 1)
         backends_row.addWidget(self.api_card, 1)
@@ -724,12 +727,12 @@ class MainWindow(QMainWindow):
         log.info(text.strip())
 
     def _log_kobold(self, text: str):
-        self._log(f"[KoboldCpp] {text}", "#7c6fcd")
+        self._log(f"[KoboldCpp] {text}", COLOR_LOG_KOBOLD)
 
     def _log_st(self, text: str):
-        self._log(f"[SillyTavern] {text}", "#5ba0c8")
+        self._log(f"[SillyTavern] {text}", COLOR_LOG_ST)
 
-    def _log_imagegen(self, text: str, color: str = "#c77dd4"):
+    def _log_imagegen(self, text: str, color: str = COLOR_LOG_IMAGEGEN):
         self._log(f"[ImageGen] {text}", color)
 
     def _copy_log(self):
@@ -746,7 +749,7 @@ class MainWindow(QMainWindow):
         if self._api_ready:
             model = self.api_card.current_model
             via   = f"via API — {model}" if model else "via API"
-            color = "#4a9edd"
+            color = COLOR_LOG_API
         elif self._kobold_ready:
             m    = next((m for m in MODELS if m.get("key") == self._current_model_key), None)
             name = m["name"] if m else "KoboldCpp"
@@ -1165,6 +1168,7 @@ class MainWindow(QMainWindow):
         self._stop_kobold()
         self._stop_st()
         self._stop_imagegen_local()
+        self._deactivate_api()
 
     def _open_st(self):
         webbrowser.open(SILLYTAVERN_URL)

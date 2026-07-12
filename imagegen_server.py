@@ -127,7 +127,3 @@ def stop():
     _server.server_close()
     _server = None
     _thread = None
-
-
-def is_running() -> bool:
-    return _server is not None
