@@ -137,6 +137,12 @@ _REGENERATE_CONFIG = {
 
 _REQUIRED_OUTPUT_FIELDS = ("name", "description")
 
+# Separator between entries in the Alternate Greetings box — alternate_greetings
+# is a list in the card spec, but the Output tab only has single-string text
+# widgets, so multiple greetings are typed as one box separated by a line
+# containing just this marker.
+_ALT_GREETING_SEP = "\n---\n"
+
 _FIELD_LENGTH_TARGETS = {
     "personality": {"short": 100, "medium": 200, "long": 350},
     "scenario":    {"short": 80,  "medium": 150, "long": 275},
@@ -622,6 +628,7 @@ class CharGenDialog(QDialog):
         self._expanding_field   = "personality"
         self._expanding_verb    = "expanded"
         self._last_hint_key     = None
+        self._condense_undo     = None  # (field_key, previous_text) or None
 
         self._build_ui()
 
@@ -768,7 +775,7 @@ class CharGenDialog(QDialog):
 
         # Optional toggles
         def _optional_field(attr, placeholder, lines, label):
-            chk = QCheckBox(f"{label}  (uncheck to skip)")
+            chk = QCheckBox(f"{label}  (check to include)")
             chk.setChecked(False)
             chk.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
             form_vbox.addWidget(chk)
@@ -796,6 +803,18 @@ class CharGenDialog(QDialog):
             "Dialogue style notes — tone, vocabulary, how the character talks (optional)",
             3, "Dialogue Examples",
         )
+
+        # These three didn't persist like Distinctive/NSFW below — reset to
+        # unchecked on every reopen even if the user always wants them on.
+        try:
+            if "scenario" in _prefs:
+                self.chk_scenario.setChecked(bool(_prefs["scenario"]))
+            if "first_mes" in _prefs:
+                self.chk_first_mes.setChecked(bool(_prefs["first_mes"]))
+            if "mes_example" in _prefs:
+                self.chk_mes_example.setChecked(bool(_prefs["mes_example"]))
+        except (TypeError, ValueError):
+            pass
 
         form_vbox.addStretch()
 
@@ -852,6 +871,21 @@ class CharGenDialog(QDialog):
 
         self.out_mes_example = _multi("Dialogue examples will appear here after generation", 3)
         _out_field("Dialogue Examples", self.out_mes_example, "mes_example")
+
+        # alternate_greetings is a list in the card spec (SillyTavern lets you
+        # swipe between them), not a single string — doesn't fit _out_field's
+        # generic one-string-per-key wiring, so it gets its own small
+        # populate/sync pair below instead.
+        self.out_alternate_greetings = _multi(
+            f"Optional extra opening messages the user can swipe between. "
+            f"Separate multiple greetings with a line containing just ---",
+            3,
+        )
+        out_vbox.addWidget(_lbl("Alternate Greetings"))
+        out_vbox.addSpacing(2)
+        out_vbox.addWidget(self.out_alternate_greetings)
+        out_vbox.addSpacing(6)
+        self.out_alternate_greetings.textChanged.connect(self._sync_alternate_greetings)
 
         # Only shown when the model's response fails to parse as JSON — there's
         # no structured card to populate the fields above with, so the raw
@@ -920,6 +954,12 @@ class CharGenDialog(QDialog):
         self._btn_condense.setToolTip("Tighten the current field to the selected target length, keeping its substance.")
         self._btn_condense.clicked.connect(self._condense_field)
         condense_row.addWidget(self._btn_condense)
+        self._btn_undo_condense = QPushButton("Undo")
+        self._btn_undo_condense.setFixedHeight(26)
+        self._btn_undo_condense.setEnabled(False)
+        self._btn_undo_condense.setToolTip("Restore the field's text from just before the last Condense.")
+        self._btn_undo_condense.clicked.connect(self._undo_condense)
+        condense_row.addWidget(self._btn_undo_condense)
         out_vbox.addLayout(condense_row)
 
         self._expand_combo.currentIndexChanged.connect(self._update_field_wordcount)
@@ -1134,6 +1174,9 @@ class CharGenDialog(QDialog):
             self.btn_copy.setEnabled(has_card)
             self.btn_save_json.setEnabled(has_card)
             self.btn_save_png.setEnabled(has_card)
+            self._btn_undo_condense.setEnabled(self._condense_undo is not None)
+        else:
+            self._btn_undo_condense.setEnabled(False)
 
     def _backend_kind(self) -> str:
         return self._combo_backend.currentData() if self._combo_backend else "local"
@@ -1197,6 +1240,16 @@ class CharGenDialog(QDialog):
             else:
                 widget.setPlainText(text)
             widget.blockSignals(False)
+
+        greetings = card.get("alternate_greetings") or []
+        if not isinstance(greetings, list):
+            greetings = []
+        self.out_alternate_greetings.blockSignals(True)
+        self.out_alternate_greetings.setPlainText(
+            _ALT_GREETING_SEP.join(str(g) for g in greetings)
+        )
+        self.out_alternate_greetings.blockSignals(False)
+
         self._lbl_raw_fallback.setVisible(False)
         self._raw_fallback.setVisible(False)
         self._update_card_validity()
@@ -1215,6 +1268,13 @@ class CharGenDialog(QDialog):
         self._last_card[field_key] = text
         self._update_field_wordcount()
         self._update_card_validity()
+
+    def _sync_alternate_greetings(self):
+        if self._last_card is None:
+            return
+        text = self.out_alternate_greetings.toPlainText()
+        greetings = [g.strip() for g in text.split(_ALT_GREETING_SEP.strip()) if g.strip()]
+        self._last_card["alternate_greetings"] = greetings
 
     def _update_card_validity(self):
         """Simple health check for the editable Output fields. Syntactic JSON
@@ -1260,6 +1320,9 @@ class CharGenDialog(QDialog):
             "temperature": self._slider_temp.value() / 100.0,
             "distinctive": self.chk_distinctive.isChecked(),
             "nsfw": self.chk_nsfw.isChecked(),
+            "scenario": self.chk_scenario.isChecked(),
+            "first_mes": self.chk_first_mes.isChecked(),
+            "mes_example": self.chk_mes_example.isChecked(),
         })
         if ok:
             self._set_status("Generation defaults saved.", COLOR_STATUS_RUNNING)
@@ -1485,6 +1548,7 @@ class CharGenDialog(QDialog):
 
         self._expanding_field = field_key
         self._expanding_verb  = "condensed"
+        self._condense_undo = (field_key, self._last_card.get(field_key, ""))
         self._set_busy(True)
         self._set_status(
             f"Condensing {self._expand_combo.currentText().lower()} (~{target} words)…",
@@ -1501,6 +1565,13 @@ class CharGenDialog(QDialog):
             return
         self._last_card[self._expanding_field] = raw
         self._populate_output_fields()
+        if self._expanding_verb != "condensed":
+            # A completed Expand/Regenerate makes any pending condense-undo
+            # entry refer to a field that's since changed again for an
+            # unrelated reason — clear it rather than let Undo silently
+            # restore stale, no-longer-relevant text. (Button state itself is
+            # derived from self._condense_undo by _set_busy(False) below.)
+            self._condense_undo = None
         # Look up the label for the field actually edited (self._expanding_field,
         # captured at kickoff) rather than re-reading the combo live — if the
         # user switched Field to something else while this request was in
@@ -1511,6 +1582,21 @@ class CharGenDialog(QDialog):
         self._set_status(f"{label} {self._expanding_verb}.", COLOR_STATUS_RUNNING)
         self._update_field_wordcount()
         self._set_busy(False)
+
+    def _undo_condense(self):
+        """Single-level undo — restores whatever a field's text was
+        immediately before the most recent Condense. Not a full history,
+        just enough to recover from an overzealous condense without having
+        to regenerate the whole card."""
+        if not self._condense_undo or self._last_card is None:
+            return
+        field_key, previous_text = self._condense_undo
+        self._last_card[field_key] = previous_text
+        self._populate_output_fields()
+        self._update_field_wordcount()
+        self._condense_undo = None
+        self._btn_undo_condense.setEnabled(False)
+        self._set_status(f"{field_key} restored to before the last condense.", COLOR_STATUS_RUNNING)
 
     def _get_portrait_prompt(self):
         if not self._last_card:
