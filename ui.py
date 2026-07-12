@@ -837,7 +837,25 @@ class MainWindow(QMainWindow):
         proc.start()
         self._kobold_proc = proc
         self._kobold_job = JobObject()
-        proc.started.connect(lambda: self._kobold_job.assign(proc.processId()))
+        proc.started.connect(
+            lambda: self._assign_job_or_warn(self._kobold_job, proc, self._log_kobold)
+        )
+
+    def _assign_job_or_warn(self, job, proc, log_fn):
+        """assign() failing (bad PID, permission issue, or the process already
+        belonging to another job Windows/AV/some other launcher put it in —
+        AssignProcessToJobObject fails outright pre-nested-job-support, and
+        can still fail even with nested jobs depending on how that other job
+        was created) used to be silently swallowed — the lambda's return
+        value was discarded by Qt's signal connection. If this ever fires,
+        it means the job-object safety net isn't actually protecting this
+        process, so taskkill is the only remaining defense for it."""
+        if not job.assign(proc.processId()):
+            log_fn(
+                "WARNING: Could not add this process to its safety-net Job Object "
+                "(taskkill on Stop/close is now the only cleanup path for it — "
+                "if the app is later force-closed/crashed, this process may survive)."
+            )
 
     def _tree_kill(self, pid: int, wait: bool = False):
         """taskkill /T (tree-kill) — needed because koboldcpp.exe (a PyInstaller
@@ -909,6 +927,15 @@ class MainWindow(QMainWindow):
             self.kobold_card.lbl_subtitle.setText(model_name)
             self._log_kobold(f"Ready — {model_name}")
             self._update_tools()
+            # Second attempt at job-object assignment, well after the process
+            # was first created — covers a narrow window right at process
+            # creation (e.g. antivirus briefly locking a freshly-spawned exe
+            # during on-access scanning) that could make the first attempt
+            # (at the `started` signal) fail even though the process is
+            # otherwise healthy. Harmless no-op if the first attempt already
+            # succeeded.
+            if self._kobold_proc:
+                self._assign_job_or_warn(self._kobold_job, self._kobold_proc, self._log_kobold)
 
     def _on_kobold_error(self, error):
         # QProcess never emits `finished` for FailedToStart — without this,
@@ -997,7 +1024,9 @@ class MainWindow(QMainWindow):
         proc.start()
         self._st_proc = proc
         self._st_job = JobObject()
-        proc.started.connect(lambda: self._st_job.assign(proc.processId()))
+        proc.started.connect(
+            lambda: self._assign_job_or_warn(self._st_job, proc, self._log_st)
+        )
 
     def _stop_st(self, wait: bool = False):
         if self._st_proc and self._st_proc.state() != QProcess.ProcessState.NotRunning:
@@ -1036,6 +1065,8 @@ class MainWindow(QMainWindow):
             self.btn_st_open.setEnabled(True)
             self._log_st("Ready.")
             self._update_tools()
+            if self._st_proc:
+                self._assign_job_or_warn(self._st_job, self._st_proc, self._log_st)
 
     def _on_st_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
