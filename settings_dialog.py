@@ -1162,19 +1162,7 @@ class SettingsDialog(QDialog):
             self._model_table.removeRow(r)
 
     def _model_browse_path(self):
-        rows = list({i.row() for i in self._model_table.selectedItems()})
-        if not rows:
-            QMessageBox.information(self, "Models", "Select a row first.")
-            return
-        r = rows[0]
-        current = (self._model_table.item(r, 2) or QTableWidgetItem("")).text()
-        start = os.path.dirname(current) if current else ""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select model file", start,
-            "GGUF models (*.gguf);;All files (*)"
-        )
-        if path:
-            self._model_table.setItem(r, 2, QTableWidgetItem(path))
+        _table_browse_path(self._model_table, 2, self, "GGUF models (*.gguf);;All files (*)")
 
     # -- Browse helpers ------------------------------------------------
 

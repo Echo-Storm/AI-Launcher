@@ -1235,7 +1235,7 @@ class CharGenDialog(QDialog):
 
     def _safe_name(self) -> str:
         name = (self._last_card or {}).get("name") or self.edit_name.text().strip() or "Unknown"
-        return re.sub(r'[\\/:*?"<>|]', "_", name)
+        return re.sub(r'[\\/:*?"<>|]', "_", str(name))
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Select output folder", self._output_dir)
