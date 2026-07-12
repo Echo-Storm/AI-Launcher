@@ -347,6 +347,7 @@ class SettingsDialog(QDialog):
 
         self._cfg    = {}
         self._worker = None
+        self._config_load_failed = False
 
         self._load_config()
         self._build_ui()
@@ -363,8 +364,21 @@ class SettingsDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Settings", f"Could not read config.json:\n{e}")
             self._cfg = {}
+            # Don't let Save persist this blank stand-in over the user's real
+            # config — constants.py treats an unreadable config.json as fatal
+            # for the same reason; blanking-and-allowing-save here would
+            # silently clobber real settings the moment the app is re-run.
+            self._config_load_failed = True
 
     def _save_config(self) -> bool:
+        if self._config_load_failed:
+            QMessageBox.critical(
+                self, "Settings",
+                "config.json couldn't be read when this dialog opened, so saving now "
+                "would overwrite it with blank defaults. Fix or restore config.json "
+                "first, then reopen Settings."
+            )
+            return False
         self._collect()
         try:
             with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
