@@ -76,9 +76,10 @@ class ImageGenWorker(QThread):
     error     = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, prompt: str, parent=None):
+    def __init__(self, prompt: str, negative_prompt: str = "", parent=None):
         super().__init__(parent)
         self.prompt = prompt
+        self.negative_prompt = negative_prompt
         self._cancel_requested = False
 
     def request_cancel(self):
@@ -107,6 +108,7 @@ class ImageGenWorker(QThread):
             raise _Cancelled()
         return imagegen_engine.generate_image(
             pipe, img2img, upscaler, device, self.prompt,
+            extra_negative_prompt=self.negative_prompt,
             progress_cb=self.progress.emit,
             step_callback=self._check_cancel,
         )
@@ -116,7 +118,7 @@ class ImageGenDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Image Gen (Local)")
-        self.resize(560, 820)
+        self.resize(560, 880)
         self.setStyleSheet(_STYLE)
 
         self._worker = None
@@ -131,6 +133,12 @@ class ImageGenDialog(QDialog):
         self.prompt_edit.setPlaceholderText("Describe the scene...")
         self.prompt_edit.setFixedHeight(80)
         layout.addWidget(self.prompt_edit)
+
+        layout.addWidget(QLabel("Negative Prompt (optional)"))
+        self.negative_prompt_edit = QPlainTextEdit()
+        self.negative_prompt_edit.setPlaceholderText("Things to avoid...")
+        self.negative_prompt_edit.setFixedHeight(50)
+        layout.addWidget(self.negative_prompt_edit)
 
         btn_row = QHBoxLayout()
         self.btn_generate = QPushButton("Generate")
@@ -166,6 +174,7 @@ class ImageGenDialog(QDialog):
     def _set_busy(self, busy: bool):
         self.btn_generate.setEnabled(not busy)
         self.prompt_edit.setEnabled(not busy)
+        self.negative_prompt_edit.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
         self.btn_cancel.setVisible(busy)
 
@@ -183,11 +192,12 @@ class ImageGenDialog(QDialog):
         if not prompt:
             self._set_status("Enter a prompt first.", COLOR_STATUS_ERROR)
             return
+        negative_prompt = self.negative_prompt_edit.toPlainText().strip()
 
         self._set_busy(True)
         self._set_status("Starting...")
 
-        self._worker = ImageGenWorker(prompt, parent=self)
+        self._worker = ImageGenWorker(prompt, negative_prompt, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_done)
         self._worker.error.connect(self._on_error)

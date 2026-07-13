@@ -2,7 +2,7 @@
 
 A dark-themed Windows desktop app for running local AI writing sessions. Manages **KoboldCpp** and **SillyTavern** as background services, switches seamlessly between local GGUF inference and remote API backends, includes a full **SillyTavern character card generator** with portrait embedding and personality expansion, and an in-process **SDXL image generator** that SillyTavern can generate through directly.
 
-![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.7.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.8.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 > If this saves you time: [☕ Ko-fi](https://ko-fi.com/xechostormx)
 >
@@ -172,7 +172,7 @@ If a generation's response fails to parse as a card at all (model wrapped it in 
 
 A local SDXL image generator that runs **in-process** — no external Stable Diffusion WebUI, no separate subprocess to manage. Point your prompt at it from the app's own dialog, or let SillyTavern generate through it directly during a story.
 
-Deliberately a **one-button, pre-tuned generator**, not a general Stable Diffusion UI: the checkpoint, LoRA(s), Textual Inversion(s), resolution, steps, CFG scale, and hires-fix settings are all configured once in Settings and then just work — every generation uses the same tuned look. If you want to fiddle with individual parameters per-generation, that's what actual Stable Diffusion WebUIs are for.
+Deliberately a **one-button, pre-tuned generator**, not a general Stable Diffusion UI: the checkpoint, LoRA(s), Textual Inversion(s), resolution, steps, CFG scale, and hires-fix settings are all configured once in Settings and then just work — every generation uses the same tuned look. The dialog itself only exposes what changes per-image: a prompt box and an optional negative-prompt box (added to the automatic baseline negative prompt and any negative-target Textual Inversions, not a replacement for them). If you want to fiddle with resolution/steps/CFG/scheduler per-generation, that's what actual Stable Diffusion WebUIs are for.
 
 ### Start / Stop / Open
 
