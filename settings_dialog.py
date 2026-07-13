@@ -1160,10 +1160,33 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _on_save(self):
+        self._warn_incomplete_ti_rows()
         self._warn_missing_imagegen_paths()
         self._warn_missing_embeddings_path()
         if self._save_config():
             self.accept()
+
+    def _warn_incomplete_ti_rows(self):
+        """A Textual Inversion row needs BOTH a path and a token to mean
+        anything — _collect() silently drops any row missing either one,
+        since there's nothing valid to persist. Without this warning, that
+        silent drop looks exactly like "my settings aren't saving": add a
+        row, browse to a path, forget to type a token, hit Save, reopen —
+        the row is just gone with no explanation of why."""
+        incomplete = []
+        for r in range(self._ti_table.rowCount()):
+            path  = (self._ti_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            token = (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
+            if path and not token:
+                incomplete.append(f"{path}\n  (missing a Token - won't be saved)")
+            elif token and not path:
+                incomplete.append(f"Token \"{token}\"\n  (missing a Path - won't be saved)")
+        if incomplete:
+            QMessageBox.warning(
+                self, "Textual Inversions",
+                "These rows are missing a Path or Token and will be dropped "
+                "when you save (both are required):\n\n" + "\n\n".join(incomplete)
+            )
 
     def _warn_missing_embeddings_path(self):
         """Same heads-up as _warn_missing_imagegen_paths(), for the Embeddings
