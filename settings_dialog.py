@@ -659,7 +659,16 @@ class SettingsDialog(QDialog):
         self._st_port.setFixedWidth(100)
         g.addWidget(self._st_port, 1, 1, Qt.AlignmentFlag.AlignLeft)
 
-        g.setRowStretch(2, 1)
+        g.addWidget(_lbl("Custom browser (optional)"), 2, 0)
+        self._st_browser = QLineEdit()
+        self._st_browser.setPlaceholderText("Leave blank to use the system default browser")
+        g.addWidget(self._st_browser, 2, 1)
+        btn_browser = QPushButton("Browse…")
+        btn_browser.setFixedWidth(72)
+        btn_browser.clicked.connect(lambda: self._browse_file(self._st_browser, "Executable (*.exe);;All files (*)"))
+        g.addWidget(btn_browser, 2, 2)
+
+        g.setRowStretch(3, 1)
         return w
 
     # ── API tab ───────────────────────────────────────────────────────
@@ -1041,6 +1050,7 @@ class SettingsDialog(QDialog):
         st = self._cfg.get("sillytavern", {})
         self._st_dir.setText(st.get("dir", ""))
         self._st_port.setValue(int(st.get("port", 8000)))
+        self._st_browser.setText(st.get("browser_path", ""))
 
         api = self._cfg.get("api", {})
         self._api_url.setText(api.get("base_url", ""))
@@ -1091,6 +1101,7 @@ class SettingsDialog(QDialog):
         st = self._cfg.setdefault("sillytavern", {})
         st["dir"]  = self._st_dir.text().strip()
         st["port"] = self._st_port.value()
+        st["browser_path"] = self._st_browser.text().strip()
 
         api = self._cfg.setdefault("api", {})
         api["base_url"] = self._api_url.text().strip().rstrip("/")

@@ -28,7 +28,8 @@
     },
     "sillytavern": {
         "dir":  "C:\\Path\\To\\SillyTavern",
-        "port": 8000
+        "port": 8000,
+        "browser_path": ""
     },
     "api": {
         "base_url": "https://openrouter.ai/api",

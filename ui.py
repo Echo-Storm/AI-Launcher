@@ -7,7 +7,7 @@ import subprocess
 import threading
 import webbrowser
 
-from PyQt6.QtCore    import Qt, QProcess, QThread, pyqtSignal
+from PyQt6.QtCore    import Qt, QProcess, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui     import QFont, QColor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QApplication,
@@ -22,6 +22,40 @@ from constants import *
 from winjob import JobObject
 
 log = logging.getLogger(__name__)
+
+_VRAM_UNAVAILABLE_LOGGED = False
+
+
+def _query_vram():
+    """Returns (used_mb, total_mb) from `nvidia-smi`, or None if unavailable
+    (no NVIDIA GPU/driver, or nvidia-smi not on PATH) -- logged once, not on
+    every poll, so a machine without an NVIDIA GPU doesn't spam the log."""
+    global _VRAM_UNAVAILABLE_LOGGED
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=2,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        used_str, total_str = result.stdout.strip().split(",")
+        return int(used_str), int(total_str)
+    except Exception as e:
+        if not _VRAM_UNAVAILABLE_LOGGED:
+            log.info(f"VRAM indicator disabled — nvidia-smi unavailable: {e}")
+            _VRAM_UNAVAILABLE_LOGGED = True
+        return None
+
+
+def _vram_color(used_mb: int, total_mb: int) -> str:
+    pct = used_mb / total_mb if total_mb else 0
+    if pct < 0.80:
+        return COLOR_STATUS_RUNNING
+    if pct < 0.93:
+        return COLOR_STATUS_STARTING
+    return COLOR_STATUS_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +492,15 @@ class MainWindow(QMainWindow):
             lambda: webbrowser.open("https://ko-fi.com/xechostormx")
         )
 
+        self.vram_label = QLabel()
+        self.vram_label.setFont(QFont(FONT_UI_FAMILY, 8))
+        self.vram_label.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; background: transparent;")
+        self.vram_label.setVisible(False)
+
         hdr_layout.addWidget(hdr_title)
         hdr_layout.addStretch()
+        hdr_layout.addWidget(self.vram_label)
+        hdr_layout.addSpacing(10)
         hdr_layout.addWidget(btn_donate)
         hdr_layout.addSpacing(6)
         hdr_layout.addWidget(btn_settings)
@@ -698,6 +739,25 @@ class MainWindow(QMainWindow):
 
         self._update_tools()
 
+        self._vram_timer = QTimer(self)
+        self._vram_timer.timeout.connect(self._update_vram_label)
+        self._vram_timer.start(3000)
+        self._update_vram_label()
+
+    def _update_vram_label(self):
+        stats = _query_vram()
+        if stats is None:
+            self.vram_label.setVisible(False)
+            self._vram_timer.stop()  # nvidia-smi isn't going to appear later either
+            return
+        used_mb, total_mb = stats
+        used_gb, total_gb = used_mb / 1024, total_mb / 1024
+        self.vram_label.setVisible(True)
+        self.vram_label.setStyleSheet(
+            f"color: {_vram_color(used_mb, total_mb)}; background: transparent;"
+        )
+        self.vram_label.setText(f"VRAM {used_gb:.1f}/{total_gb:.1f}GB")
+
     @staticmethod
     def _section_header(text: str) -> QWidget:
         w = QWidget()
@@ -871,7 +931,7 @@ class MainWindow(QMainWindow):
                 subprocess.run(
                     ['taskkill', '/F', '/T', '/PID', str(pid)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=5,
+                    timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             except (subprocess.TimeoutExpired, OSError) as e:
                 log.warning(f"taskkill /T /PID {pid} failed or timed out: {e}")
@@ -1202,6 +1262,25 @@ class MainWindow(QMainWindow):
         self._deactivate_api()
 
     def _open_st(self):
+        # Optional dedicated browser (e.g. a portable LibreWolf install) --
+        # launched with its own -profile dir so it never touches any other
+        # Firefox/LibreWolf profile on the machine, and -no-remote so it
+        # can't get reused/redirected by an already-running instance of
+        # that same browser. Falls back to the system default browser if
+        # unconfigured or the configured path no longer exists.
+        if SILLYTAVERN_BROWSER_PATH:
+            if os.path.isfile(SILLYTAVERN_BROWSER_PATH):
+                profile_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "browser_profile",
+                )
+                if QProcess.startDetached(
+                    SILLYTAVERN_BROWSER_PATH,
+                    ["-profile", profile_dir, "-no-remote", SILLYTAVERN_URL],
+                ):
+                    return
+                self._log_st(f"WARNING: configured browser failed to launch: {SILLYTAVERN_BROWSER_PATH}")
+            else:
+                self._log_st(f"WARNING: configured browser not found, using system default: {SILLYTAVERN_BROWSER_PATH}")
         webbrowser.open(SILLYTAVERN_URL)
 
     # ------------------------------------------------------------------

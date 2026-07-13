@@ -97,6 +97,12 @@ SILLYTAVERN_ARGS = ["server.js"]
 SILLYTAVERN_URL  = f"http://127.0.0.1:{_st.get('port', 8000)}"
 SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on"]
 
+# Optional: a dedicated browser executable to open ST in instead of the
+# system default (e.g. a portable LibreWolf install) -- launched with its
+# own -profile dir, see ui.py's _open_st(). Empty/missing path falls back
+# to webbrowser.open().
+SILLYTAVERN_BROWSER_PATH = _st.get("browser_path", "")
+
 # ---------------------------------------------------------------------------
 # SDXL (in-process diffusers backend — txt2img + LoRA + TI + ESRGAN hires-fix)
 # ---------------------------------------------------------------------------
