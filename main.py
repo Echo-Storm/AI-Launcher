@@ -68,9 +68,22 @@ def _check_config() -> bool:
     return False
 
 
+_SINGLE_INSTANCE_MUTEX = "AIWritingToolsLauncher_SingleInstance_Mutex_2b6f7e"
+_APP_WINDOW_TITLE = "AI Writing Tools"  # matches constants.APP_NAME — hardcoded so
+                                        # this check never depends on config.json
+                                        # existing (constants.py is fatal without it)
+
+
 def main():
     logger = _setup_logging()
     _install_excepthook(logger)
+
+    import singleinstance
+    if not singleinstance.acquire(_SINGLE_INSTANCE_MUTEX):
+        logger.warning("Another instance is already running — focusing it and exiting.")
+        singleinstance.focus_existing_window(_APP_WINDOW_TITLE)
+        singleinstance.notify_already_running(_APP_WINDOW_TITLE)
+        sys.exit(0)
 
     if not _check_config():
         sys.exit(0)
