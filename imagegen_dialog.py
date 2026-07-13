@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout,
+    QProgressBar, QPushButton, QVBoxLayout,
 )
 
 import imagegen_engine
@@ -64,6 +64,17 @@ QPushButton#accent {{
 QPushButton#accent:hover:enabled {{
     background: {COLOR_ACCENT};
 }}
+QProgressBar {{
+    background: {COLOR_PANEL};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    border-radius: 4px;
+    text-align: center;
+    color: {COLOR_TEXT};
+}}
+QProgressBar::chunk {{
+    background: {COLOR_ACCENT_DIM};
+    border-radius: 3px;
+}}
 """
 
 class _Cancelled(Exception):
@@ -71,10 +82,11 @@ class _Cancelled(Exception):
 
 
 class ImageGenWorker(QThread):
-    progress  = pyqtSignal(str)
-    finished  = pyqtSignal(str)  # output file path
-    error     = pyqtSignal(str)
-    cancelled = pyqtSignal()
+    progress      = pyqtSignal(str)
+    step_progress = pyqtSignal(int, int)  # (current_step, total_steps) within the current pass
+    finished      = pyqtSignal(str)  # output file path
+    error         = pyqtSignal(str)
+    cancelled     = pyqtSignal()
 
     def __init__(self, prompt: str, negative_prompt: str = "", parent=None):
         super().__init__(parent)
@@ -90,6 +102,14 @@ class ImageGenWorker(QThread):
         self._cancel_requested = True
 
     def _check_cancel(self, pipe, step_index, timestep, callback_kwargs):
+        # pipe.num_timesteps is set internally by diffusers before the
+        # denoising loop starts (the actual step count for THIS pass, e.g.
+        # the hires-fix img2img pass runs fewer steps than the base pass
+        # once `strength` truncates the schedule) -- exactly the total this
+        # per-step callback needs, with no extra bookkeeping required.
+        total = getattr(pipe, "num_timesteps", 0)
+        if total:
+            self.step_progress.emit(step_index + 1, total)
         if self._cancel_requested:
             raise _Cancelled()
         return callback_kwargs
@@ -165,6 +185,12 @@ class ImageGenDialog(QDialog):
         self.status_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
         layout.addWidget(self.status_lbl)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(14)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
         self.preview_lbl = QLabel()
         self.preview_lbl.setMinimumSize(480, 600)
         self.preview_lbl.setStyleSheet(
@@ -208,9 +234,12 @@ class ImageGenDialog(QDialog):
 
         self._set_busy(True)
         self._set_status("Starting...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # indeterminate until the first step lands
 
         self._worker = ImageGenWorker(prompt, negative_prompt, parent=self)
         self._worker.progress.connect(self._on_progress)
+        self._worker.step_progress.connect(self._on_step_progress)
         self._worker.finished.connect(self._on_done)
         self._worker.error.connect(self._on_error)
         self._worker.cancelled.connect(self._on_cancelled)
@@ -218,6 +247,16 @@ class ImageGenDialog(QDialog):
 
     def _on_progress(self, text: str):
         self._set_status(text)
+        # A new phase (base pass / upscale / hires-fix) is starting -- go
+        # indeterminate until step_progress tells us this phase's real total
+        # (the ESRGAN upscale phase has no per-step hook, so it just stays
+        # indeterminate the whole time, which is honest: we don't know).
+        self.progress_bar.setRange(0, 0)
+
+    def _on_step_progress(self, step: int, total: int):
+        if self.progress_bar.maximum() != total:
+            self.progress_bar.setRange(0, total)
+        self.progress_bar.setValue(step)
 
     def _on_done(self, path: str):
         self._last_output_path = path
@@ -229,16 +268,19 @@ class ImageGenDialog(QDialog):
         self.btn_save.setEnabled(True)
         self._set_status(f"Done — {os.path.basename(path)}", COLOR_STATUS_RUNNING)
         self._set_busy(False)
+        self.progress_bar.setVisible(False)
         self._worker = None
 
     def _on_error(self, message: str):
         self._set_status(f"Error: {message}", COLOR_STATUS_ERROR)
         self._set_busy(False)
+        self.progress_bar.setVisible(False)
         self._worker = None
 
     def _on_cancelled(self):
         self._set_status("Cancelled.")
         self._set_busy(False)
+        self.progress_bar.setVisible(False)
         self._worker = None
 
     def _on_cancel(self):

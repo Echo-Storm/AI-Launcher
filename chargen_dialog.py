@@ -10,7 +10,7 @@ from PyQt6.QtGui     import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox, QComboBox, QDialog, QVBoxLayout, QHBoxLayout,
-    QFrame, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+    QFrame, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton,
     QSlider, QStyle, QStyleOptionSlider, QTabWidget, QWidget,
     QFileDialog, QMessageBox, QScrollArea,
 )
@@ -578,6 +578,17 @@ QSlider::sub-page:horizontal {{
 QSlider::handle:horizontal:hover {{
     background: {COLOR_ACCENT};
     border: 2px solid {COLOR_TEXT};
+}}
+QProgressBar {{
+    background: {COLOR_PANEL};
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    border-radius: 4px;
+    text-align: center;
+    color: {COLOR_TEXT};
+}}
+QProgressBar::chunk {{
+    background: {COLOR_ACCENT_DIM};
+    border-radius: 3px;
 }}
 QComboBox {{
     background: {COLOR_PANEL};
@@ -1715,6 +1726,12 @@ class CharGenDialog(QDialog):
         gen_status.setWordWrap(True)
         vbox.addWidget(gen_status)
 
+        gen_progress = QProgressBar()
+        gen_progress.setFixedHeight(12)
+        gen_progress.setTextVisible(False)
+        gen_progress.setVisible(False)
+        vbox.addWidget(gen_progress)
+
         gen_preview = QLabel()
         gen_preview.setFixedSize(220, 220)
         gen_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1741,6 +1758,15 @@ class CharGenDialog(QDialog):
         def on_gen_progress(text: str):
             gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
             gen_status.setText(text)
+            # New phase starting -- indeterminate until step_progress reports
+            # this phase's real total (ESRGAN upscale has no per-step hook,
+            # so it just stays indeterminate for its whole duration).
+            gen_progress.setRange(0, 0)
+
+        def on_gen_step_progress(step: int, total: int):
+            if gen_progress.maximum() != total:
+                gen_progress.setRange(0, total)
+            gen_progress.setValue(step)
 
         def on_gen_done(path: str):
             gen_state["image_path"] = path
@@ -1751,6 +1777,7 @@ class CharGenDialog(QDialog):
             gen_status.setStyleSheet(f"color: {COLOR_STATUS_RUNNING}; font-size: 8pt;")
             gen_status.setText("Done.")
             set_gen_busy(False)
+            gen_progress.setVisible(False)
             btn_use_portrait.setEnabled(True)
             gen_state["worker"] = None
 
@@ -1758,12 +1785,14 @@ class CharGenDialog(QDialog):
             gen_status.setStyleSheet(f"color: {COLOR_STATUS_ERROR}; font-size: 8pt;")
             gen_status.setText(f"Error: {message}")
             set_gen_busy(False)
+            gen_progress.setVisible(False)
             gen_state["worker"] = None
 
         def on_gen_cancelled():
             gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
             gen_status.setText("Cancelled.")
             set_gen_busy(False)
+            gen_progress.setVisible(False)
             gen_state["worker"] = None
 
         def start_generate():
@@ -1775,12 +1804,15 @@ class CharGenDialog(QDialog):
             set_gen_busy(True)
             gen_status.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
             gen_status.setText("Starting...")
+            gen_progress.setVisible(True)
+            gen_progress.setRange(0, 0)
             # Parented to self (the persistent CharGenDialog), not dlg — dlg
             # is WA_DeleteOnClose and transient, so a worker parented to it
             # would risk Qt destroying a still-running QThread if the popup
             # is closed mid-generation.
             worker = ImageGenWorker(prompt, parent=self)
             worker.progress.connect(on_gen_progress)
+            worker.step_progress.connect(on_gen_step_progress)
             worker.finished.connect(on_gen_done)
             worker.error.connect(on_gen_error)
             worker.cancelled.connect(on_gen_cancelled)
