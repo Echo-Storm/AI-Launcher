@@ -183,7 +183,8 @@ def _load_locked():
     if adapter_names:
         pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
 
-    loaded_ti_tokens = []
+    loaded_ti_tokens_negative = []
+    loaded_ti_tokens_positive = []
     seen_tokens = set()
     for ti in SDXL_TEXTUAL_INVERSIONS:
         path = ti.get("path", "")
@@ -207,7 +208,10 @@ def _load_locked():
                 ti_state_dict["clip_g"], token=token,
                 text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2,
             )
-            loaded_ti_tokens.append(token)
+            if ti.get("target", "negative") == "positive":
+                loaded_ti_tokens_positive.append(token)
+            else:
+                loaded_ti_tokens_negative.append(token)
         except Exception as e:
             log.warning(f"Failed to load textual inversion '{token}' from {path}, skipping: {e}")
 
@@ -228,7 +232,8 @@ def _load_locked():
     _pipe_cache["img2img"] = img2img
     _pipe_cache["upscaler"] = upscaler
     _pipe_cache["device"] = device
-    _pipe_cache["ti_tokens"] = loaded_ti_tokens
+    _pipe_cache["ti_tokens_negative"] = loaded_ti_tokens_negative
+    _pipe_cache["ti_tokens_positive"] = loaded_ti_tokens_positive
 
 
 _OOM_MESSAGE = (
@@ -302,7 +307,8 @@ def try_unload_pipeline() -> bool:
         _pipe_cache.pop("img2img", None)
         _pipe_cache.pop("upscaler", None)
         _pipe_cache.pop("device", None)
-        _pipe_cache.pop("ti_tokens", None)
+        _pipe_cache.pop("ti_tokens_negative", None)
+        _pipe_cache.pop("ti_tokens_positive", None)
         _reclaim_gpu_memory()
         return True
     finally:
@@ -351,11 +357,15 @@ def generate_image(
     run_hires = _to_bool(enable_hr, default=True)
 
     negative_prompt = "blurry, low quality"
-    ti_tokens = _pipe_cache.get("ti_tokens", [])
-    if ti_tokens:
-        negative_prompt = f"{', '.join(ti_tokens)}, {negative_prompt}"
+    negative_ti_tokens = _pipe_cache.get("ti_tokens_negative", [])
+    if negative_ti_tokens:
+        negative_prompt = f"{', '.join(negative_ti_tokens)}, {negative_prompt}"
     if extra_negative_prompt:
         negative_prompt = f"{extra_negative_prompt}, {negative_prompt}"
+
+    positive_ti_tokens = _pipe_cache.get("ti_tokens_positive", [])
+    if positive_ti_tokens:
+        prompt = f"{', '.join(positive_ti_tokens)}, {prompt}"
 
     if seed is not None and int(seed) >= 0:
         generator = torch.Generator(device=device).manual_seed(int(seed))

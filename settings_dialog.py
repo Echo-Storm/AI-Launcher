@@ -296,6 +296,44 @@ def _table_checkbox_checked(table: QTableWidget, row: int, column: int) -> bool:
     return chk.isChecked() if chk else True
 
 
+# A textual inversion's trigger token can belong in either prompt slot
+# depending on what the embedding itself was trained to do (e.g. a
+# "negative" quality embedding vs. a "positive"-prompt style/unlock
+# embedding) — there's no way to know which from the file alone, so this is
+# a per-row choice, not a fixed pipeline behavior.
+_TI_TARGET_CHOICES = [("negative", "Negative"), ("positive", "Positive")]
+
+
+def _guess_ti_target(path: str, token: str) -> str:
+    """Best-effort default for a new/imported row: look for an explicit
+    'positive'/'negative' hint in the token or filename. Falls back to
+    'negative' (matching this feature's pre-existing always-negative
+    behavior) when neither hints — the dropdown is always there to
+    override, this just saves a click in the common case."""
+    haystack = f"{token} {os.path.basename(path)}".lower()
+    if "positive" in haystack:
+        return "positive"
+    if "negative" in haystack:
+        return "negative"
+    return "negative"
+
+
+def _table_set_combo(table: QTableWidget, row: int, column: int, choices: list, value: str):
+    combo = QComboBox()
+    for key, label in choices:
+        combo.addItem(label, key)
+    idx = combo.findData(value)
+    combo.setCurrentIndex(idx if idx >= 0 else 0)
+    table.setCellWidget(row, column, combo)
+
+
+def _table_combo_value(table: QTableWidget, row: int, column: int, default: str) -> str:
+    combo = table.cellWidget(row, column)
+    if combo is None:
+        return default
+    return combo.currentData() or default
+
+
 # ---------------------------------------------------------------------------
 # Live API test worker (uses field values, not saved config)
 # ---------------------------------------------------------------------------
@@ -765,12 +803,13 @@ class SettingsDialog(QDialog):
         v.addWidget(_divider())
         v.addWidget(_section("Textual Inversions"))
 
-        self._ti_table = QTableWidget(0, 3)
+        self._ti_table = QTableWidget(0, 4)
         self._ti_table.setObjectName("kvTable")
-        self._ti_table.setHorizontalHeaderLabels(["On", "Path", "Token"])
+        self._ti_table.setHorizontalHeaderLabels(["On", "Path", "Token", "Target"])
         self._ti_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self._ti_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._ti_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._ti_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._ti_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._ti_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked |
                                        QTableWidget.EditTrigger.SelectedClicked)
@@ -981,7 +1020,7 @@ class SettingsDialog(QDialog):
             self._add_lora_row(lora.get("path", ""), str(lora.get("weight", 1.0)), lora.get("enabled", True))
         self._ti_table.setRowCount(0)
         for ti in sdxl.get("textual_inversions", []):
-            self._add_ti_row(ti.get("path", ""), ti.get("token", ""), ti.get("enabled", True))
+            self._add_ti_row(ti.get("path", ""), ti.get("token", ""), ti.get("enabled", True), ti.get("target"))
         self._sdxl_upscaler.setText(sdxl.get("upscaler_path", ""))
         self._sdxl_output_dir.setText(sdxl.get("output_dir", ""))
         d = SDXL_GENERATION_DEFAULTS
@@ -1051,7 +1090,8 @@ class SettingsDialog(QDialog):
             token = (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
             if path and token:
                 enabled = _table_checkbox_checked(self._ti_table, r, 0)
-                tis.append({"path": path, "token": token, "enabled": enabled})
+                target = _table_combo_value(self._ti_table, r, 3, "negative")
+                tis.append({"path": path, "token": token, "enabled": enabled, "target": target})
         sdxl["textual_inversions"] = tis
 
         sdxl["upscaler_path"]      = self._sdxl_upscaler.text().strip()
@@ -1186,12 +1226,13 @@ class SettingsDialog(QDialog):
         self._lora_table.setItem(r, 1, QTableWidgetItem(path))
         self._lora_table.setItem(r, 2, QTableWidgetItem(weight))
 
-    def _add_ti_row(self, path: str = "", token: str = "", enabled: bool = True):
+    def _add_ti_row(self, path: str = "", token: str = "", enabled: bool = True, target: str = None):
         r = self._ti_table.rowCount()
         self._ti_table.insertRow(r)
         _table_set_checkbox(self._ti_table, r, 0, enabled)
         self._ti_table.setItem(r, 1, QTableWidgetItem(path))
         self._ti_table.setItem(r, 2, QTableWidgetItem(token))
+        _table_set_combo(self._ti_table, r, 3, _TI_TARGET_CHOICES, target or _guess_ti_target(path, token))
 
     def _model_add(self):
         self._model_table_add_row()

@@ -2,7 +2,7 @@
 
 A dark-themed Windows desktop app for running local AI writing sessions. Manages **KoboldCpp** and **SillyTavern** as background services, switches seamlessly between local GGUF inference and remote API backends, includes a full **SillyTavern character card generator** with portrait embedding and personality expansion, and an in-process **SDXL image generator** that SillyTavern can generate through directly.
 
-![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.6.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.7.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 > If this saves you time: [☕ Ko-fi](https://ko-fi.com/xechostormx)
 >
@@ -83,7 +83,7 @@ Full config editor — no manual JSON editing required:
 - **SillyTavern tab** — directory path, port
 - **API tab** — base URL, API key (with show/hide toggle), default model, live Test Connection button
 - **Models tab** — editable table of KoboldCpp models with name, key, and path; browse for GGUF files directly
-- **Image Gen tab** — checkpoint path, LoRA table (on/off + path + weight, any number), Textual Inversion table (on/off + path + token, any number), upscaler path, output directory (browsable, defaults to `SDXL\output` if left blank), resolution/steps/CFG scale/hires-fix settings, a scheduler dropdown (DPM++ 2M Karras/Euler a/DPM++ SDE Karras/UniPC), a **Restore Generation Defaults** button, API server port, and the SillyTavern-override toggle (warned, off by default)
+- **Image Gen tab** — checkpoint path, LoRA table (on/off + path + weight, any number), Textual Inversion table (on/off + path + token + positive/negative target, any number), upscaler path, output directory (browsable, defaults to `SDXL\output` if left blank), resolution/steps/CFG scale/hires-fix settings, a scheduler dropdown (DPM++ 2M Karras/Euler a/DPM++ SDE Karras/UniPC), a **Restore Generation Defaults** button, API server port, and the SillyTavern-override toggle (warned, off by default)
 - **App tab** — CharGen output directory
 
 Changes take effect on next launch. Saving warns (non-blocking) if any Image Gen path doesn't exist on disk.
@@ -199,7 +199,7 @@ By default, this app ignores everything SillyTavern sends except the prompt — 
 
 ### Configuring LoRAs and Textual Inversions
 
-The Image Gen settings tab has two tables — one for LoRAs (On checkbox + file path + weight), one for Textual Inversions (On checkbox + file path + trigger token) — each with Add row / Remove selected / Browse path buttons. Add as many of either as you want; every checked-on LoRA loads with its own weight, and every checked-on Textual Inversion token gets folded into the negative prompt automatically. Uncheck a row to keep it in your library without it loading — no need to delete and re-add it later. Textual Inversion files need the dual `clip_l`/`clip_g` SDXL embedding format.
+The Image Gen settings tab has two tables — one for LoRAs (On checkbox + file path + weight), one for Textual Inversions (On checkbox + file path + trigger token + Target dropdown) — each with Add row / Remove selected / Browse path buttons. Add as many of either as you want; every checked-on LoRA loads with its own weight. Each Textual Inversion's Target dropdown picks whether its trigger token gets folded into the positive or negative prompt — some embeddings (e.g. quality/negative-style ones) are meant for the negative prompt, others (style or "unlock"-style embeddings) are meant for the positive prompt, and there's no way to tell which just from the file. New rows guess a default from the token/filename (looking for the words "positive"/"negative") but you can always override it. Uncheck a row to keep it in your library without it loading — no need to delete and re-add it later. Textual Inversion files need the dual `clip_l`/`clip_g` SDXL embedding format.
 
 ---
 

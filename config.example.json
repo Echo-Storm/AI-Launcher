@@ -42,7 +42,7 @@
             {"path": "C:\\Path\\To\\SDXL\\Lora\\lora.safetensors", "weight": 1.0, "enabled": true}
         ],
         "textual_inversions": [
-            {"path": "C:\\Path\\To\\SDXL\\Embeddings\\negative.safetensors", "token": "negative", "enabled": true}
+            {"path": "C:\\Path\\To\\SDXL\\Embeddings\\negative.safetensors", "token": "negative", "enabled": true, "target": "negative"}
         ],
         "upscaler_path":  "C:\\Path\\To\\SDXL\\Upscaler\\upscaler.pth",
         "output_dir":     "C:\\Path\\To\\SDXL\\output",
