@@ -853,7 +853,15 @@ class SettingsDialog(QDialog):
         ti_btn_row.setSpacing(6)
         btn_ti_add = QPushButton("Add row")
         btn_ti_add.setFixedHeight(24)
-        btn_ti_add.clicked.connect(lambda: self._add_ti_row())
+        # "sdxl" is confirmed safe as a default trigger token: it's not
+        # already a whole word in either of SDXL's CLIP tokenizer
+        # vocabularies, unlike e.g. "positive"/"negative" which risk
+        # colliding with real English words. Still just a starting point,
+        # not a real embedding's actual designed token - change it per row
+        # if the embedding itself needs a specific word, and give each row
+        # its own token if adding more than one (duplicates get silently
+        # skipped past the first).
+        btn_ti_add.clicked.connect(lambda: self._add_ti_row(token="sdxl"))
         btn_ti_remove = QPushButton("Remove selected")
         btn_ti_remove.setFixedHeight(24)
         btn_ti_remove.clicked.connect(lambda: _table_remove_selected(self._ti_table))
