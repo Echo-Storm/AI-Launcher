@@ -136,13 +136,6 @@ def _load_locked():
             "PyPI instead of the CUDA build: pip install torch --index-url "
             "https://download.pytorch.org/whl/cu130 --force-reinstall"
         )
-    else:
-        # Every generation reuses one of a small handful of shapes (base
-        # size, then the hires-fix upscaled size) — letting cuDNN benchmark
-        # and cache the fastest conv algorithm per shape pays for itself
-        # after the first generation at each size, at the cost of a slower
-        # first run whenever a new shape is hit.
-        torch.backends.cudnn.benchmark = True
 
     pipe = StableDiffusionXLPipeline.from_single_file(
         SDXL_MODEL_PATH, torch_dtype=torch.float16, use_safetensors=True,
@@ -327,6 +320,7 @@ def esrgan_upscale(image: Image.Image, upscaler, device: str) -> Image.Image:
 def generate_image(
     pipe, img2img, upscaler, device, prompt: str,
     extra_negative_prompt: str = "", progress_cb=None, step_callback=None,
+    cancel_check=None,
     steps=None, cfg_scale=None, width=None, height=None, seed=None,
     enable_hr=None, hr_scale=None, denoising_strength=None,
 ) -> str:
@@ -337,7 +331,12 @@ def generate_image(
 
     step_callback, if given, is passed straight through to diffusers as
     callback_on_step_end (used for cooperative cancellation — see
-    imagegen_dialog.py's _ImageGenWorker).
+    imagegen_dialog.py's _ImageGenWorker). cancel_check, if given, is called
+    directly (not via diffusers) between the base pass and the hires-fix
+    pass — the ESRGAN upscale in between has no per-step hook of its own,
+    so without this a cancel requested during upscaling silently waits
+    until the entire subsequent hires-fix pass ALSO finishes before it's
+    even noticed.
 
     steps/cfg_scale/width/height/seed/enable_hr/hr_scale/denoising_strength
     default to this app's own config.json settings when left as None — the
@@ -391,6 +390,9 @@ def generate_image(
         base_image.save(out_path)
         return out_path
 
+    if cancel_check:
+        cancel_check()
+
     hires_width = int(width * hr_scale) // 8 * 8
     hires_height = int(height * hr_scale) // 8 * 8
 
@@ -400,6 +402,9 @@ def generate_image(
         upscaled = upscaled.resize((hires_width, hires_height), Image.LANCZOS)
     else:
         upscaled = base_image.resize((hires_width, hires_height))
+
+    if cancel_check:
+        cancel_check()
 
     _progress("Hires-fix pass...")
     hires_image = img2img(

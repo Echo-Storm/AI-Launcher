@@ -1756,7 +1756,8 @@ class CharGenDialog(QDialog):
 
         def cancel_generate():
             if gen_state["worker"] is not None:
-                gen_status.setText("Cancelling...")
+                btn_cancel_gen.setEnabled(False)
+                gen_status.setText("Cancelling (finishing current step)...")
                 gen_state["worker"].request_cancel()
 
         def use_as_portrait():

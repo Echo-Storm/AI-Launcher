@@ -1324,9 +1324,17 @@ class SettingsDialog(QDialog):
         _table_set_combo(self._ti_table, r, 3, _TI_TARGET_CHOICES, target or _guess_ti_target(path, token), default="negative")
 
     def _next_default_ti_token(self, base: str = "sdxl") -> str:
-        """First of base/base_2/base_3/... not already used by an existing
-        TI row - so clicking "Add row" repeatedly doesn't hand out the same
-        default token to every new row (which would collide with itself)."""
+        """First of base/base2/base3/... not already used by an existing TI
+        row - so clicking "Add row" repeatedly doesn't hand out the same
+        default token to every new row (which would collide with itself).
+
+        Deliberately NOT an underscore-digit suffix (base_2, base_3, ...):
+        diffusers' own load_textual_inversion auto-registers exactly that
+        pattern (token_1, token_2, ...) as the sub-tokens of a multi-vector
+        embedding. A row loaded as e.g. "sdxl" that turns out to be
+        multi-vector silently claims "sdxl_1"/"sdxl_2"/... internally, which
+        would collide with a base_2-style default handed to a LATER row and
+        block it from loading with no obvious cause."""
         existing = {
             (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
             for r in range(self._ti_table.rowCount())
@@ -1334,9 +1342,9 @@ class SettingsDialog(QDialog):
         if base not in existing:
             return base
         i = 2
-        while f"{base}_{i}" in existing:
+        while f"{base}{i}" in existing:
             i += 1
-        return f"{base}_{i}"
+        return f"{base}{i}"
 
     def _model_add(self):
         self._model_table_add_row()

@@ -94,6 +94,17 @@ class ImageGenWorker(QThread):
             raise _Cancelled()
         return callback_kwargs
 
+    def _raise_if_cancelled(self):
+        # Same flag, called directly (not via diffusers' callback signature)
+        # for the phases generate_image() runs OUTSIDE a diffusers step loop
+        # — currently just the ESRGAN upscale between the base image and the
+        # hires-fix pass, which has no per-step hook of its own to check
+        # during. Doesn't make the upscale itself interruptible mid-flight,
+        # but stops a pending cancel from being silently ignored until the
+        # entire (uninterruptible) hires-fix pass also finishes.
+        if self._cancel_requested:
+            raise _Cancelled()
+
     def run(self):
         try:
             out_path = imagegen_engine.with_pipeline(self._generate)
@@ -111,6 +122,7 @@ class ImageGenWorker(QThread):
             extra_negative_prompt=self.negative_prompt,
             progress_cb=self.progress.emit,
             step_callback=self._check_cancel,
+            cancel_check=self._raise_if_cancelled,
         )
 
 
@@ -235,7 +247,7 @@ class ImageGenDialog(QDialog):
         # until its next between-steps checkpoint, then emits `cancelled`.
         if self._worker is not None:
             self.btn_cancel.setEnabled(False)
-            self._set_status("Cancelling...")
+            self._set_status("Cancelling (finishing current step)...")
             self._worker.request_cancel()
 
     def _on_save(self):
