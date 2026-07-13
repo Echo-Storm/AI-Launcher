@@ -858,10 +858,10 @@ class SettingsDialog(QDialog):
         # vocabularies, unlike e.g. "positive"/"negative" which risk
         # colliding with real English words. Still just a starting point,
         # not a real embedding's actual designed token - change it per row
-        # if the embedding itself needs a specific word, and give each row
-        # its own token if adding more than one (duplicates get silently
-        # skipped past the first).
-        btn_ti_add.clicked.connect(lambda: self._add_ti_row(token="sdxl"))
+        # if the embedding itself needs a specific word. Auto-incremented
+        # (sdxl, sdxl_2, sdxl_3, ...) so adding several rows in a row
+        # doesn't immediately collide with itself.
+        btn_ti_add.clicked.connect(lambda: self._add_ti_row(token=self._next_default_ti_token()))
         btn_ti_remove = QPushButton("Remove selected")
         btn_ti_remove.setFixedHeight(24)
         btn_ti_remove.clicked.connect(lambda: _table_remove_selected(self._ti_table))
@@ -1169,10 +1169,38 @@ class SettingsDialog(QDialog):
 
     def _on_save(self):
         self._warn_incomplete_ti_rows()
+        self._warn_duplicate_ti_tokens()
         self._warn_missing_imagegen_paths()
         self._warn_missing_embeddings_path()
         if self._save_config():
             self.accept()
+
+    def _warn_duplicate_ti_tokens(self):
+        """Two enabled TI rows sharing the same token is ambiguous —
+        imagegen_engine.py's _load_locked() silently skips every row after
+        the first with a given token (only a log.warning, nothing surfaced
+        in the UI), so without this the second embedding just never loads
+        with no clue why. Mirrors that function's own filtering: only
+        enabled rows with both a path and a token count, matching exactly
+        which rows _load_locked() would actually consider."""
+        seen = set()
+        duplicates = set()
+        for r in range(self._ti_table.rowCount()):
+            path  = (self._ti_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            token = (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
+            if not path or not token or not _table_checkbox_checked(self._ti_table, r, 0):
+                continue
+            if token in seen:
+                duplicates.add(token)
+            else:
+                seen.add(token)
+        if duplicates:
+            QMessageBox.warning(
+                self, "Textual Inversions",
+                "These tokens are used by more than one enabled row - only "
+                "the first row for each token actually loads, the rest are "
+                "silently skipped:\n\n" + "\n".join(sorted(duplicates))
+            )
 
     def _warn_incomplete_ti_rows(self):
         """A Textual Inversion row needs BOTH a path and a token to mean
@@ -1294,6 +1322,21 @@ class SettingsDialog(QDialog):
         self._ti_table.setItem(r, 1, QTableWidgetItem(path))
         self._ti_table.setItem(r, 2, QTableWidgetItem(token))
         _table_set_combo(self._ti_table, r, 3, _TI_TARGET_CHOICES, target or _guess_ti_target(path, token), default="negative")
+
+    def _next_default_ti_token(self, base: str = "sdxl") -> str:
+        """First of base/base_2/base_3/... not already used by an existing
+        TI row - so clicking "Add row" repeatedly doesn't hand out the same
+        default token to every new row (which would collide with itself)."""
+        existing = {
+            (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
+            for r in range(self._ti_table.rowCount())
+        }
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
 
     def _model_add(self):
         self._model_table_add_row()
