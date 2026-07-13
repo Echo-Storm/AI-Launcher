@@ -18,16 +18,16 @@ A dark-themed Windows desktop app for running local AI writing sessions. Manages
 
 <table>
 <tr>
-<td width="50%"><b>Main window</b> — backends idle</td>
-<td width="50%"><b>Main window</b> — KoboldCpp + CharGen running</td>
+<td width="50%"><b>Before</b> — Main window, backends idle</td>
+<td width="50%"><b>After</b> — KoboldCpp + CharGen running</td>
 </tr>
 <tr>
 <td><img src="screenshots/main-window-stopped.png" width="100%"></td>
 <td><img src="screenshots/main-window-running.png" width="100%"></td>
 </tr>
 <tr>
-<td><b>CharGen</b> — input form, Scenario/First Message/Dialogue Examples all enabled</td>
-<td><b>CharGen</b> — generated card, top half (Name/Description/Personality/Scenario/First Message)</td>
+<td><b>Before</b> — CharGen input form, Scenario/First Message/Dialogue Examples all enabled</td>
+<td><b>After</b> — generated card (top half: Name/Description/Personality/Scenario/First Message)</td>
 </tr>
 <tr>
 <td><img src="screenshots/chargen-input.png" width="100%"></td>
