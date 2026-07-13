@@ -253,17 +253,22 @@ def _build_user_prompt(fields: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> dict | None:
+    # strict=False: models very often write real newlines inside multi-line
+    # fields (mes_example especially, since it's asked for dialogue turns)
+    # instead of escaping them as \n — Python's default strict=True treats
+    # any literal control character inside a string as invalid and rejects
+    # the whole response, even though the structure is otherwise correct.
     m = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
     if m:
         text = m.group(1).strip()
     m = re.search(r'\{[\s\S]*\}', text)
     if m:
         try:
-            return json.loads(m.group(0))
+            return json.loads(m.group(0), strict=False)
         except json.JSONDecodeError:
             pass
     try:
-        return json.loads(text.strip())
+        return json.loads(text.strip(), strict=False)
     except json.JSONDecodeError:
         return None
 
