@@ -17,6 +17,64 @@ _JobObjectExtendedLimitInformation = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _PROCESS_TERMINATE = 0x0001
 _PROCESS_SET_QUOTA = 0x0100
+_TH32CS_SNAPPROCESS = 0x00000002
+_MAX_PATH = 260
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", ctypes.c_wchar * _MAX_PATH),
+    ]
+
+
+def _pid_to_ppid_snapshot() -> dict:
+    """One-shot snapshot of every running process's PID -> parent PID, via
+    the same Toolhelp32 API Task Manager itself uses — no subprocess spawn
+    (unlike shelling out to WMIC/PowerShell), so this is cheap enough to
+    call every time we need to find a process's current descendants."""
+    mapping = {}
+    snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if snap == -1:
+        return mapping
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        if not ctypes.windll.kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return mapping
+        while True:
+            mapping[entry.th32ProcessID] = entry.th32ParentProcessID
+            if not ctypes.windll.kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                break
+    finally:
+        ctypes.windll.kernel32.CloseHandle(snap)
+    return mapping
+
+
+def _descendants(root_pid: int) -> list:
+    """Every process currently descended from root_pid (children,
+    grandchildren, ...), found via one process snapshot rather than
+    walking live handles. Needed because AssignProcessToJobObject only
+    affects the exact PID given — a child the target process spawned
+    *before* we get around to assigning it is never swept in retroactively,
+    only children spawned *after* automatically inherit job membership."""
+    pid_to_ppid = _pid_to_ppid_snapshot()
+    found = []
+    frontier = [root_pid]
+    while frontier:
+        parent = frontier.pop()
+        children = [pid for pid, ppid in pid_to_ppid.items() if ppid == parent]
+        found.extend(children)
+        frontier.extend(children)
+    return found
 
 
 class _IO_COUNTERS(ctypes.Structure):
@@ -83,10 +141,7 @@ class JobObject:
         except OSError:
             self._handle = None
 
-    def assign(self, pid: int) -> bool:
-        """Adds the given PID to this job. Returns False (non-fatal — caller
-        still has taskkill as a fallback) if the job failed to create, the
-        PID can't be opened, or assignment itself fails."""
+    def _assign_one(self, pid: int) -> bool:
         if not self._handle or not pid:
             return False
         try:
@@ -101,6 +156,27 @@ class JobObject:
                 ctypes.windll.kernel32.CloseHandle(hproc)
         except OSError:
             return False
+
+    def assign(self, pid: int) -> bool:
+        """Adds the given PID, AND every process currently descended from it
+        (children, grandchildren, ...), to this job. Returns False (non-fatal
+        — caller still has taskkill as a fallback) only if the root PID's own
+        assignment fails; a descendant that can't be opened/assigned (e.g. it
+        already exited) is skipped silently, since the root is what matters
+        for the warning log.
+
+        Sweeping descendants matters because AssignProcessToJobObject only
+        ever affects the exact PID given — a child process spawned *before*
+        this call (e.g. a PyInstaller bootloader's real worker, already
+        running by the time our 'started' signal fires) is never retroactively
+        pulled in; only children spawned *after* the parent joins automatically
+        inherit membership. Call this again later (e.g. once a ready string is
+        seen in the process's output) to catch children that spawn shortly
+        after startup."""
+        root_ok = self._assign_one(pid)
+        for child_pid in _descendants(pid):
+            self._assign_one(child_pid)
+        return root_ok
 
     def terminate(self):
         """Kills every process currently in this job, by handle — works even
