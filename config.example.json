@@ -39,10 +39,10 @@
         "dir":            "C:\\Path\\To\\SDXL",
         "model_path":     "C:\\Path\\To\\SDXL\\Model\\model.safetensors",
         "loras": [
-            {"path": "C:\\Path\\To\\SDXL\\Lora\\lora.safetensors", "weight": 1.0}
+            {"path": "C:\\Path\\To\\SDXL\\Lora\\lora.safetensors", "weight": 1.0, "enabled": true}
         ],
         "textual_inversions": [
-            {"path": "C:\\Path\\To\\SDXL\\Embeddings\\negative.safetensors", "token": "negative"}
+            {"path": "C:\\Path\\To\\SDXL\\Embeddings\\negative.safetensors", "token": "negative", "enabled": true}
         ],
         "upscaler_path":  "C:\\Path\\To\\SDXL\\Upscaler\\upscaler.pth",
         "output_dir":     "C:\\Path\\To\\SDXL\\output",

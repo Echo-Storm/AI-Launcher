@@ -571,6 +571,17 @@ QComboBox QAbstractItemView {{
     selection-background-color: {COLOR_ACCENT_DIM};
     outline: none;
 }}
+QCheckBox::indicator {{
+    width: 14px;
+    height: 14px;
+    border: 1px solid {COLOR_BORDER_BRIGHT};
+    border-radius: 3px;
+    background: {COLOR_PANEL};
+}}
+QCheckBox::indicator:checked {{
+    background: {COLOR_ACCENT_DIM};
+    border-color: {COLOR_ACCENT};
+}}
 """
 
 _PORTRAIT_PLACEHOLDER_STYLE = (

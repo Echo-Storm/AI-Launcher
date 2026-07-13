@@ -271,6 +271,31 @@ def _table_browse_path(table: QTableWidget, column: int, parent, filter_str: str
         table.setItem(r, column, QTableWidgetItem(path))
 
 
+def _table_set_checkbox(table: QTableWidget, row: int, column: int, checked: bool = True):
+    """Puts a centered QCheckBox in a cell — QTableWidgetItem has no native
+    checkbox rendering worth using, so a real widget via setCellWidget is the
+    standard Qt approach for a per-row enable/disable toggle."""
+    chk = QCheckBox()
+    chk.setChecked(checked)
+    container = QWidget()
+    lay = QHBoxLayout(container)
+    lay.addWidget(chk)
+    lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lay.setContentsMargins(0, 0, 0, 0)
+    table.setCellWidget(row, column, container)
+
+
+def _table_checkbox_checked(table: QTableWidget, row: int, column: int) -> bool:
+    """Defaults to True (enabled) if the cell has no checkbox widget yet —
+    keeps a freshly-inserted row (before _table_set_checkbox runs) from
+    reading as disabled."""
+    container = table.cellWidget(row, column)
+    if container is None:
+        return True
+    chk = container.findChild(QCheckBox)
+    return chk.isChecked() if chk else True
+
+
 # ---------------------------------------------------------------------------
 # Live API test worker (uses field values, not saved config)
 # ---------------------------------------------------------------------------
@@ -703,11 +728,12 @@ class SettingsDialog(QDialog):
         v.addWidget(_divider())
         v.addWidget(_section("LoRAs"))
 
-        self._lora_table = QTableWidget(0, 2)
+        self._lora_table = QTableWidget(0, 3)
         self._lora_table.setObjectName("kvTable")
-        self._lora_table.setHorizontalHeaderLabels(["Path", "Weight"])
-        self._lora_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._lora_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._lora_table.setHorizontalHeaderLabels(["On", "Path", "Weight"])
+        self._lora_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._lora_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._lora_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._lora_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._lora_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked |
                                          QTableWidget.EditTrigger.SelectedClicked)
@@ -721,14 +747,14 @@ class SettingsDialog(QDialog):
         lora_btn_row.setSpacing(6)
         btn_lora_add = QPushButton("Add row")
         btn_lora_add.setFixedHeight(24)
-        btn_lora_add.clicked.connect(lambda: (_table_add_row(self._lora_table, "", "1.0"),))
+        btn_lora_add.clicked.connect(lambda: self._add_lora_row())
         btn_lora_remove = QPushButton("Remove selected")
         btn_lora_remove.setFixedHeight(24)
         btn_lora_remove.clicked.connect(lambda: _table_remove_selected(self._lora_table))
         btn_lora_browse = QPushButton("Browse path…")
         btn_lora_browse.setFixedHeight(24)
         btn_lora_browse.clicked.connect(
-            lambda: _table_browse_path(self._lora_table, 0, self, "Safetensors (*.safetensors)")
+            lambda: _table_browse_path(self._lora_table, 1, self, "Safetensors (*.safetensors)")
         )
         lora_btn_row.addWidget(btn_lora_add)
         lora_btn_row.addWidget(btn_lora_remove)
@@ -739,11 +765,12 @@ class SettingsDialog(QDialog):
         v.addWidget(_divider())
         v.addWidget(_section("Textual Inversions"))
 
-        self._ti_table = QTableWidget(0, 2)
+        self._ti_table = QTableWidget(0, 3)
         self._ti_table.setObjectName("kvTable")
-        self._ti_table.setHorizontalHeaderLabels(["Path", "Token"])
-        self._ti_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._ti_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._ti_table.setHorizontalHeaderLabels(["On", "Path", "Token"])
+        self._ti_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._ti_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._ti_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._ti_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._ti_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked |
                                        QTableWidget.EditTrigger.SelectedClicked)
@@ -757,14 +784,14 @@ class SettingsDialog(QDialog):
         ti_btn_row.setSpacing(6)
         btn_ti_add = QPushButton("Add row")
         btn_ti_add.setFixedHeight(24)
-        btn_ti_add.clicked.connect(lambda: (_table_add_row(self._ti_table, "", ""),))
+        btn_ti_add.clicked.connect(lambda: self._add_ti_row())
         btn_ti_remove = QPushButton("Remove selected")
         btn_ti_remove.setFixedHeight(24)
         btn_ti_remove.clicked.connect(lambda: _table_remove_selected(self._ti_table))
         btn_ti_browse = QPushButton("Browse path…")
         btn_ti_browse.setFixedHeight(24)
         btn_ti_browse.clicked.connect(
-            lambda: _table_browse_path(self._ti_table, 0, self, "Safetensors (*.safetensors);;All files (*)")
+            lambda: _table_browse_path(self._ti_table, 1, self, "Safetensors (*.safetensors);;All files (*)")
         )
         ti_btn_row.addWidget(btn_ti_add)
         ti_btn_row.addWidget(btn_ti_remove)
@@ -951,10 +978,10 @@ class SettingsDialog(QDialog):
         self._sdxl_model.setText(sdxl.get("model_path", ""))
         self._lora_table.setRowCount(0)
         for lora in sdxl.get("loras", []):
-            _table_add_row(self._lora_table, lora.get("path", ""), str(lora.get("weight", 1.0)))
+            self._add_lora_row(lora.get("path", ""), str(lora.get("weight", 1.0)), lora.get("enabled", True))
         self._ti_table.setRowCount(0)
         for ti in sdxl.get("textual_inversions", []):
-            _table_add_row(self._ti_table, ti.get("path", ""), ti.get("token", ""))
+            self._add_ti_row(ti.get("path", ""), ti.get("token", ""), ti.get("enabled", True))
         self._sdxl_upscaler.setText(sdxl.get("upscaler_path", ""))
         self._sdxl_output_dir.setText(sdxl.get("output_dir", ""))
         d = SDXL_GENERATION_DEFAULTS
@@ -1007,22 +1034,24 @@ class SettingsDialog(QDialog):
 
         loras = []
         for r in range(self._lora_table.rowCount()):
-            path = (self._lora_table.item(r, 0) or QTableWidgetItem("")).text().strip()
-            weight_text = (self._lora_table.item(r, 1) or QTableWidgetItem("1.0")).text().strip()
+            path = (self._lora_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            weight_text = (self._lora_table.item(r, 2) or QTableWidgetItem("1.0")).text().strip()
             if path:
                 try:
                     weight = float(weight_text)
                 except ValueError:
                     weight = 1.0
-                loras.append({"path": path, "weight": weight})
+                enabled = _table_checkbox_checked(self._lora_table, r, 0)
+                loras.append({"path": path, "weight": weight, "enabled": enabled})
         sdxl["loras"] = loras
 
         tis = []
         for r in range(self._ti_table.rowCount()):
-            path  = (self._ti_table.item(r, 0) or QTableWidgetItem("")).text().strip()
-            token = (self._ti_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            path  = (self._ti_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            token = (self._ti_table.item(r, 2) or QTableWidgetItem("")).text().strip()
             if path and token:
-                tis.append({"path": path, "token": token})
+                enabled = _table_checkbox_checked(self._ti_table, r, 0)
+                tis.append({"path": path, "token": token, "enabled": enabled})
         sdxl["textual_inversions"] = tis
 
         sdxl["upscaler_path"]      = self._sdxl_upscaler.text().strip()
@@ -1088,12 +1117,12 @@ class SettingsDialog(QDialog):
         if self._sdxl_model.text().strip() and not os.path.isfile(self._sdxl_model.text().strip()):
             missing.append(f"Checkpoint: {self._sdxl_model.text().strip()}")
         for r in range(self._lora_table.rowCount()):
-            path = (self._lora_table.item(r, 0) or QTableWidgetItem("")).text().strip()
-            if path and not os.path.isfile(path):
+            path = (self._lora_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            if path and _table_checkbox_checked(self._lora_table, r, 0) and not os.path.isfile(path):
                 missing.append(f"LoRA: {path}")
         for r in range(self._ti_table.rowCount()):
-            path = (self._ti_table.item(r, 0) or QTableWidgetItem("")).text().strip()
-            if path and not os.path.isfile(path):
+            path = (self._ti_table.item(r, 1) or QTableWidgetItem("")).text().strip()
+            if path and _table_checkbox_checked(self._ti_table, r, 0) and not os.path.isfile(path):
                 missing.append(f"Textual inversion: {path}")
         upscaler = self._sdxl_upscaler.text().strip()
         if upscaler and not os.path.isfile(upscaler):
@@ -1149,6 +1178,20 @@ class SettingsDialog(QDialog):
         self._model_table.setItem(r, 0, QTableWidgetItem(name))
         self._model_table.setItem(r, 1, QTableWidgetItem(key))
         self._model_table.setItem(r, 2, QTableWidgetItem(path))
+
+    def _add_lora_row(self, path: str = "", weight: str = "1.0", enabled: bool = True):
+        r = self._lora_table.rowCount()
+        self._lora_table.insertRow(r)
+        _table_set_checkbox(self._lora_table, r, 0, enabled)
+        self._lora_table.setItem(r, 1, QTableWidgetItem(path))
+        self._lora_table.setItem(r, 2, QTableWidgetItem(weight))
+
+    def _add_ti_row(self, path: str = "", token: str = "", enabled: bool = True):
+        r = self._ti_table.rowCount()
+        self._ti_table.insertRow(r)
+        _table_set_checkbox(self._ti_table, r, 0, enabled)
+        self._ti_table.setItem(r, 1, QTableWidgetItem(path))
+        self._ti_table.setItem(r, 2, QTableWidgetItem(token))
 
     def _model_add(self):
         self._model_table_add_row()

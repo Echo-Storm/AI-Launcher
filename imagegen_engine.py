@@ -136,17 +136,38 @@ def _load_locked():
             "PyPI instead of the CUDA build: pip install torch --index-url "
             "https://download.pytorch.org/whl/cu130 --force-reinstall"
         )
+    else:
+        # Every generation reuses one of a small handful of shapes (base
+        # size, then the hires-fix upscaled size) — letting cuDNN benchmark
+        # and cache the fastest conv algorithm per shape pays for itself
+        # after the first generation at each size, at the cost of a slower
+        # first run whenever a new shape is hit.
+        torch.backends.cudnn.benchmark = True
+
     pipe = StableDiffusionXLPipeline.from_single_file(
         SDXL_MODEL_PATH, torch_dtype=torch.float16, use_safetensors=True,
     ).to(device)
     pipe.scheduler = _build_scheduler(pipe.scheduler.config, SDXL_SCHEDULER)
+
+    # Only one image is ever generated at a time (the global _lock enforces
+    # this), so slicing/tiling the VAE decode costs no real speed but caps
+    # its peak VRAM — worth it unconditionally, especially for the
+    # hires-fix pass's larger image. channels_last is a free-ish conv
+    # speedup on Ada/Ampere GPUs; skip it on the CPU fallback path where it
+    # doesn't apply. img2img shares this same unet/vae by reference (built
+    # from `unet=pipe.unet, vae=pipe.vae` below), so both settings apply to
+    # it automatically without a second call.
+    pipe.vae.enable_slicing()
+    pipe.vae.enable_tiling()
+    if device == "cuda":
+        pipe.unet.to(memory_format=torch.channels_last)
 
     adapter_names = []
     adapter_weights = []
     seen_lora_paths = set()
     for i, lora in enumerate(SDXL_LORAS):
         path = lora.get("path", "")
-        if not path:
+        if not path or not lora.get("enabled", True):
             continue
         if path in seen_lora_paths:
             log.warning(f"LoRA path is used by more than one row, skipping duplicate: {path}")
@@ -167,7 +188,7 @@ def _load_locked():
     for ti in SDXL_TEXTUAL_INVERSIONS:
         path = ti.get("path", "")
         token = ti.get("token", "")
-        if not path or not token:
+        if not path or not token or not ti.get("enabled", True):
             continue
         if token in seen_tokens:
             log.warning(f"Textual inversion token '{token}' is used by more than one row, skipping duplicate: {path}")
