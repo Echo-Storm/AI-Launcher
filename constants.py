@@ -4,7 +4,7 @@ import json
 import os
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.9.1"
+APP_VERSION  = "1.9.2"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------

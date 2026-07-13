@@ -252,6 +252,36 @@ def _build_user_prompt(fields: dict) -> str:
 # Card helpers
 # ---------------------------------------------------------------------------
 
+_KNOWN_CARD_FIELDS = ("name", "description", "personality", "scenario", "first_mes", "mes_example")
+
+# Matches "field": <value that doesn't start with a valid JSON token> — some
+# local models forget to open the quote on a multi-line field's value
+# entirely, most often mes_example, since its own <START>...<START>
+# convention markers look enough like delimiters that the model treats them
+# as the value's real boundaries instead of a JSON string's quotes. The
+# \s*+ (possessive) right before the negative lookahead matters: a plain
+# \s* there will backtrack down to zero-width so the lookahead can slip past
+# by testing an unconsumed space instead of the real next character,
+# silently "approving" an already-quoted value as broken.
+_UNQUOTED_FIELD_RE = re.compile(
+    r'"(' + "|".join(re.escape(f) for f in _KNOWN_CARD_FIELDS) + r')"\s*+:\s*+'
+    r'(?!["\[{]|true\b|false\b|null\b|-?\d)([\s\S]*?)'
+    r'(?=,?\s*"(?:' + "|".join(re.escape(f) for f in _KNOWN_CARD_FIELDS) + r')"\s*:|\s*\}\s*$)'
+)
+
+
+def _repair_unquoted_values(text: str) -> str:
+    """Re-wraps a field value that's missing its opening (and/or closing)
+    quotes as a properly JSON-escaped string, using the next known card
+    field or the closing brace as the boundary. See _UNQUOTED_FIELD_RE."""
+    def _repair_one(m):
+        key, value = m.group(1), m.group(2).strip()
+        if value.endswith(","):
+            value = value[:-1].rstrip()
+        return f'"{key}": {json.dumps(value)}'
+    return _UNQUOTED_FIELD_RE.sub(_repair_one, text)
+
+
 def _extract_json(text: str) -> dict | None:
     # strict=False: models very often write real newlines inside multi-line
     # fields (mes_example especially, since it's asked for dialogue turns)
@@ -262,15 +292,13 @@ def _extract_json(text: str) -> dict | None:
     if m:
         text = m.group(1).strip()
     m = re.search(r'\{[\s\S]*\}', text)
-    if m:
+    candidate = m.group(0) if m else text.strip()
+    for attempt in (candidate, _repair_unquoted_values(candidate)):
         try:
-            return json.loads(m.group(0), strict=False)
+            return json.loads(attempt, strict=False)
         except json.JSONDecodeError:
-            pass
-    try:
-        return json.loads(text.strip(), strict=False)
-    except json.JSONDecodeError:
-        return None
+            continue
+    return None
 
 
 def _to_st_card(data: dict, fallback_name: str = "") -> dict:
