@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 
 from PyQt6.QtCore    import Qt, QThread, pyqtSignal
 from PyQt6.QtGui     import QFont
@@ -274,7 +275,16 @@ def _table_browse_path(table: QTableWidget, column: int, parent, filter_str: str
 def _table_set_checkbox(table: QTableWidget, row: int, column: int, checked: bool = True):
     """Puts a centered QCheckBox in a cell — QTableWidgetItem has no native
     checkbox rendering worth using, so a real widget via setCellWidget is the
-    standard Qt approach for a per-row enable/disable toggle."""
+    standard Qt approach for a per-row enable/disable toggle.
+
+    A cell widget swallows the click before QTableWidget's own selection
+    model ever sees it, so clicking only the checkbox (never the row's
+    text cells) leaves selectedItems() empty — "Remove selected"/"Browse
+    path…" would silently no-op on a row the user just interacted with.
+    Explicitly select the row on toggle to fix that. Looked up by identity
+    each time (not the row index captured at construction) since removing
+    an earlier row shifts every row below it, which would make a captured
+    index stale."""
     chk = QCheckBox()
     chk.setChecked(checked)
     container = QWidget()
@@ -282,6 +292,14 @@ def _table_set_checkbox(table: QTableWidget, row: int, column: int, checked: boo
     lay.addWidget(chk)
     lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lay.setContentsMargins(0, 0, 0, 0)
+
+    def _select_this_row():
+        for r in range(table.rowCount()):
+            if table.cellWidget(r, column) is container:
+                table.selectRow(r)
+                return
+
+    chk.toggled.connect(lambda _checked: _select_this_row())
     table.setCellWidget(row, column, container)
 
 
@@ -306,24 +324,36 @@ _TI_TARGET_CHOICES = [("negative", "Negative"), ("positive", "Positive")]
 
 def _guess_ti_target(path: str, token: str) -> str:
     """Best-effort default for a new/imported row: look for an explicit
-    'positive'/'negative' hint in the token or filename. Falls back to
-    'negative' (matching this feature's pre-existing always-negative
-    behavior) when neither hints — the dropdown is always there to
-    override, this just saves a click in the common case."""
+    'positive' hint, as a whole word (so 'nonnegative' or 'compositive'
+    don't misfire), in the token or filename. Falls back to 'negative'
+    (matching this feature's pre-existing always-negative behavior)
+    otherwise — the dropdown is always there to override, this just saves
+    a click in the common case."""
     haystack = f"{token} {os.path.basename(path)}".lower()
-    if "positive" in haystack:
+    if re.search(r"\bpositive\b", haystack):
         return "positive"
-    if "negative" in haystack:
-        return "negative"
     return "negative"
 
 
-def _table_set_combo(table: QTableWidget, row: int, column: int, choices: list, value: str):
+def _table_set_combo(table: QTableWidget, row: int, column: int, choices: list, value: str, default: str = None):
     combo = QComboBox()
     for key, label in choices:
         combo.addItem(label, key)
     idx = combo.findData(value)
-    combo.setCurrentIndex(idx if idx >= 0 else 0)
+    if idx < 0 and default is not None:
+        idx = combo.findData(default)
+    combo.setCurrentIndex(max(idx, 0))
+
+    # Same cell-widget-swallows-clicks issue as _table_set_checkbox — select
+    # the row on change so "Remove selected"/"Browse path…" don't silently
+    # no-op on a row the user only interacted with via this dropdown.
+    def _select_this_row():
+        for r in range(table.rowCount()):
+            if table.cellWidget(r, column) is combo:
+                table.selectRow(r)
+                return
+
+    combo.currentIndexChanged.connect(lambda _idx: _select_this_row())
     table.setCellWidget(row, column, combo)
 
 
@@ -1232,7 +1262,7 @@ class SettingsDialog(QDialog):
         _table_set_checkbox(self._ti_table, r, 0, enabled)
         self._ti_table.setItem(r, 1, QTableWidgetItem(path))
         self._ti_table.setItem(r, 2, QTableWidgetItem(token))
-        _table_set_combo(self._ti_table, r, 3, _TI_TARGET_CHOICES, target or _guess_ti_target(path, token))
+        _table_set_combo(self._ti_table, r, 3, _TI_TARGET_CHOICES, target or _guess_ti_target(path, token), default="negative")
 
     def _model_add(self):
         self._model_table_add_row()
