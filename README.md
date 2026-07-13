@@ -27,18 +27,18 @@ A dark-themed Windows desktop app for running local AI writing sessions. Manages
 </tr>
 <tr>
 <td><b>Before</b> — CharGen input form, Scenario/First Message/Dialogue Examples all enabled</td>
-<td><b>After</b> — generated card (top half: Name/Description/Personality/Scenario/First Message)</td>
+<td><b>After</b> — generated card (Name/Description/Personality/Scenario/First Message/Dialogue Examples/Alternate Greetings/portrait)</td>
 </tr>
 <tr>
 <td><img src="screenshots/chargen-input.png" width="100%"></td>
-<td><img src="screenshots/chargen-output-fields.png" width="100%"></td>
+<td><img src="screenshots/chargen-output.png" width="100%"></td>
 </tr>
 <tr>
-<td><b>CharGen</b> — generated card, bottom half (Dialogue Examples, Alternate Greetings, portrait)</td>
+<td><b>Settings</b> — KoboldCpp tab (network, performance, embeddings)</td>
 <td><b>Image Gen</b> — prompt + negative prompt, generated portrait</td>
 </tr>
 <tr>
-<td><img src="screenshots/chargen-output-portrait.png" width="100%"></td>
+<td><img src="screenshots/settings-koboldcpp.png" width="100%"></td>
 <td><img src="screenshots/imagegen-dialog.png" width="100%"></td>
 </tr>
 </table>
