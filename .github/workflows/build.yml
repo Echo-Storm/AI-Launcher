@@ -8,11 +8,19 @@
 #   - cuda: CUDA-enabled torch. Multi-GB download+build, but Image Gen runs
 #           at real speed on an NVIDIA GPU.
 #
-# The cpu variant builds on every push to main, as a "does this still build"
-# smoke check — it's the cheaper of the two. The cuda variant only builds on
-# a published Release, since it's a genuinely heavy job (multi-GB wheel
-# download, long PyInstaller collection pass) that isn't worth paying for on
-# every push. Both variants build AND upload on Release.
+# Two separate jobs, not one matrixed job with a conditional: GitHub Actions
+# job-level `if:` cannot reference the `matrix` context (matrix expansion
+# happens AFTER a job's own `if:` is evaluated, not before) -- an earlier
+# version of this file tried `if: matrix.variant == 'cpu' || ...` at the job
+# level and every run failed instantly with 0 jobs materialized ("this run
+# likely failed because of a workflow file issue"), since `matrix` simply
+# isn't a valid context there. Two plain jobs sidesteps the whole problem.
+#
+# build-cpu runs on every push to main, as a "does this still build" smoke
+# check -- it's the cheaper of the two. build-cuda only runs on a published
+# Release, since it's a genuinely heavy job (multi-GB wheel download, long
+# PyInstaller collection pass) that isn't worth paying for on every push.
+# Both build AND upload on Release.
 #
 # HOW TO USE:
 #   1. Push, then create a Release (tag it e.g. v1.9.3)
@@ -20,8 +28,8 @@
 #
 # KNOWN OPEN QUESTION: GitHub's per-file Release asset size limit may be
 # tighter than the cuda zip ends up being (torch+diffusers+transformers+CUDA
-# runtime is a multi-GB payload before compression). Check the "Report
-# artifact size" step's output on the first real run — if the cuda upload
+# runtime is a multi-GB payload before compression). Check the "Zip the
+# build" step's reported size on the first real run -- if the cuda upload
 # step fails or the asset is rejected, this needs to move to an external
 # host (e.g. a direct download link in the release notes) instead of a
 # GitHub Release asset.
@@ -38,16 +46,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-cpu:
     runs-on: windows-latest
     timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [cpu, cuda]
-    # cpu builds on every push (cheap smoke test) and on release.
-    # cuda only builds on release (expensive, no need to pay for it on every push).
-    if: matrix.variant == 'cpu' || github.event_name == 'release'
 
     steps:
       - name: Checkout repo
@@ -58,15 +59,63 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Report free disk space
-        run: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='FreeGB';E={[math]::Round($_.Free/1GB,1)}}
-
       - name: Install torch (CPU)
-        if: matrix.variant == 'cpu'
         run: python -m pip install torch==2.12.1
 
+      - name: Install remaining dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --clean ai_launcher.spec
+
+      - name: Verify build output
+        run: |
+          $exe = "dist\AI_Launcher\AI_Launcher.exe"
+          if (!(Test-Path $exe)) {
+            Write-Error "Build failed — $exe not found"
+            exit 1
+          }
+
+      - name: Report artifact size
+        run: |
+          $sizeGB = (Get-ChildItem "dist\AI_Launcher" -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
+          Write-Host ("dist\AI_Launcher size: {0:N2} GB (variant: cpu)" -f $sizeGB)
+
+      - name: Add config.example.json next to the exe
+        if: github.event_name == 'release'
+        run: Copy-Item config.example.json "dist\AI_Launcher\config.example.json"
+
+      - name: Zip the build
+        if: github.event_name == 'release'
+        run: |
+          $zipName = "AI_Launcher-cpu-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "dist\AI_Launcher\*" -DestinationPath $zipName
+          Write-Host ("Zip size: {0:N2} GB" -f ((Get-Item $zipName).Length / 1GB))
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AI_Launcher-cpu-${{ github.ref_name }}.zip
+
+  build-cuda:
+    if: github.event_name == 'release'
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: Install torch (CUDA)
-        if: matrix.variant == 'cuda'
         run: python -m pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cu130
 
       - name: Install remaining dependencies
@@ -89,20 +138,18 @@ jobs:
       - name: Report artifact size
         run: |
           $sizeGB = (Get-ChildItem "dist\AI_Launcher" -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
-          Write-Host ("dist\AI_Launcher size: {0:N2} GB (variant: ${{ matrix.variant }})" -f $sizeGB)
+          Write-Host ("dist\AI_Launcher size: {0:N2} GB (variant: cuda)" -f $sizeGB)
 
       - name: Add config.example.json next to the exe
         run: Copy-Item config.example.json "dist\AI_Launcher\config.example.json"
 
       - name: Zip the build
-        if: github.event_name == 'release'
         run: |
-          $zipName = "AI_Launcher-${{ matrix.variant }}-${{ github.ref_name }}.zip"
+          $zipName = "AI_Launcher-cuda-${{ github.ref_name }}.zip"
           Compress-Archive -Path "dist\AI_Launcher\*" -DestinationPath $zipName
           Write-Host ("Zip size: {0:N2} GB" -f ((Get-Item $zipName).Length / 1GB))
 
       - name: Upload to Release
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: AI_Launcher-${{ matrix.variant }}-${{ github.ref_name }}.zip
+          files: AI_Launcher-cuda-${{ github.ref_name }}.zip
