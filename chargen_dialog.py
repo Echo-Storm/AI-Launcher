@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from constants import (
+    APP_DIR,
     COLOR_BG, COLOR_PANEL, COLOR_BORDER, COLOR_BORDER_BRIGHT,
     COLOR_TEXT, COLOR_TEXT_MUTED, COLOR_ACCENT, COLOR_ACCENT_DIM,
     COLOR_BUTTON_BG, COLOR_BUTTON_HOVER,
@@ -467,7 +468,7 @@ class _TempSlider(QSlider):
 # Prefs persistence  (temperature + distinctive defaults)
 # ---------------------------------------------------------------------------
 
-_PREFS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chargen_prefs.json")
+_PREFS_PATH = os.path.join(APP_DIR, "chargen_prefs.json")
 
 
 def _load_prefs() -> dict:
@@ -859,8 +860,8 @@ class CharGenDialog(QDialog):
             3, "Dialogue Examples",
         )
 
-        # These three didn't persist like Distinctive/NSFW below — reset to
-        # unchecked on every reopen even if the user always wants them on.
+        # Restored from prefs the same way Distinctive/NSFW are above —
+        # written back to chargen_prefs.json by _save_defaults().
         try:
             if "scenario" in _prefs:
                 self.chk_scenario.setChecked(bool(_prefs["scenario"]))

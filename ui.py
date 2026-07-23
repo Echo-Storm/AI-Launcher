@@ -1270,9 +1270,7 @@ class MainWindow(QMainWindow):
         # unconfigured or the configured path no longer exists.
         if SILLYTAVERN_BROWSER_PATH:
             if os.path.isfile(SILLYTAVERN_BROWSER_PATH):
-                profile_dir = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), "browser_profile",
-                )
+                profile_dir = os.path.join(APP_DIR, "browser_profile")
                 if QProcess.startDetached(
                     SILLYTAVERN_BROWSER_PATH,
                     ["-profile", profile_dir, "-no-remote", SILLYTAVERN_URL],

@@ -2,16 +2,32 @@
 
 import json
 import os
+import sys
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.9.2"
+APP_VERSION  = "1.9.3"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------
-# Load config.json from the same directory as this file
+# App directory (persistent, user-writable) and resources directory (bundled,
+# read-only) — the same directory in dev mode, but not once packaged:
+# PyInstaller's frozen __file__ resolves inside the bundle (a fresh temp
+# extraction dir every launch in --onefile mode, or the _internal folder in
+# --onedir mode) — neither is where config.json/prefs/logs should persist,
+# which must instead key off sys.executable's real, permanent folder.
+# RESOURCES_DIR is for the opposite case — read-only bundled files like
+# assets/*.svg, which PyInstaller extracts to sys._MEIPASS, not next to the
+# exe. Exported (no leading underscore) so other modules reuse these instead
+# of each re-deriving their own frozen-vs-dev check.
 # ---------------------------------------------------------------------------
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    _HERE = os.path.dirname(sys.executable)
+    RESOURCES_DIR = getattr(sys, "_MEIPASS", _HERE)
+else:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    RESOURCES_DIR = _HERE
+APP_DIR = _HERE
 _CONFIG_PATH = os.path.join(_HERE, "config.json")
 
 try:

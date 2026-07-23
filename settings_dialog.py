@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from constants import (
+    APP_DIR, RESOURCES_DIR,
     COLOR_BG, COLOR_PANEL, COLOR_PANEL_ALT, COLOR_BORDER, COLOR_BORDER_BRIGHT,
     COLOR_TEXT, COLOR_TEXT_MUTED, COLOR_ACCENT, COLOR_ACCENT_DIM,
     COLOR_BUTTON_BG, COLOR_BUTTON_HOVER, COLOR_HEADER_BAR,
@@ -22,10 +23,12 @@ from constants import (
     SDXL_GENERATION_DEFAULTS, SDXL_SCHEDULER_CHOICES,
 )
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# APP_DIR (persistent, next to the real .exe once packaged) vs. RESOURCES_DIR
+# (bundled read-only files, e.g. PyInstaller's sys._MEIPASS) — see constants.py.
+_HERE = APP_DIR
 _CONFIG_PATH = os.path.join(_HERE, "config.json")
-_ARROW_UP    = os.path.join(_HERE, "assets", "arrow_up.svg").replace("\\", "/")
-_ARROW_DOWN  = os.path.join(_HERE, "assets", "arrow_down.svg").replace("\\", "/")
+_ARROW_UP    = os.path.join(RESOURCES_DIR, "assets", "arrow_up.svg").replace("\\", "/")
+_ARROW_DOWN  = os.path.join(RESOURCES_DIR, "assets", "arrow_down.svg").replace("\\", "/")
 
 _STYLE = f"""
 QDialog {{
@@ -791,6 +794,21 @@ class SettingsDialog(QDialog):
         v.setContentsMargins(16, 14, 16, 14)
         v.setSpacing(8)
 
+        v.addWidget(_section("Base Directory (optional)"))
+        dir_row0 = QHBoxLayout()
+        dir_row0.setSpacing(6)
+        self._sdxl_dir = QLineEdit()
+        self._sdxl_dir.setPlaceholderText(
+            "Only used as a fallback for Output Directory below when that's left blank"
+        )
+        dir_row0.addWidget(self._sdxl_dir, 1)
+        btn_dir0 = QPushButton("Browse…")
+        btn_dir0.setFixedWidth(72)
+        btn_dir0.clicked.connect(lambda: self._browse_dir(self._sdxl_dir))
+        dir_row0.addWidget(btn_dir0)
+        v.addLayout(dir_row0)
+
+        v.addWidget(_divider())
         v.addWidget(_section("Checkpoint"))
         ck_row = QHBoxLayout()
         ck_row.setSpacing(6)
@@ -902,7 +920,9 @@ class SettingsDialog(QDialog):
         out_row = QHBoxLayout()
         out_row.setSpacing(6)
         self._sdxl_output_dir = QLineEdit()
-        self._sdxl_output_dir.setPlaceholderText("Defaults to SDXL\\output under this app's folder")
+        self._sdxl_output_dir.setPlaceholderText(
+            "Defaults to <Base Directory>\\output, or SDXL\\output under this app's folder if that's blank too"
+        )
         out_row.addWidget(self._sdxl_output_dir, 1)
         btn3 = QPushButton("Browse…")
         btn3.setFixedWidth(72)
@@ -1062,6 +1082,7 @@ class SettingsDialog(QDialog):
             self._model_table_add_row(m.get("name", ""), m.get("key", ""), m.get("path", ""))
 
         sdxl = self._cfg.get("sdxl", {})
+        self._sdxl_dir.setText(sdxl.get("dir", ""))
         self._sdxl_model.setText(sdxl.get("model_path", ""))
         self._lora_table.setRowCount(0)
         for lora in sdxl.get("loras", []):
@@ -1118,6 +1139,7 @@ class SettingsDialog(QDialog):
         self._cfg["models"] = models
 
         sdxl = self._cfg.setdefault("sdxl", {})
+        sdxl["dir"] = self._sdxl_dir.text().strip()
         sdxl["model_path"] = self._sdxl_model.text().strip()
 
         loras = []

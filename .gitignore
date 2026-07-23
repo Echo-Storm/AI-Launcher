@@ -9,3 +9,8 @@ AI_Launcher_Log.txt
 SDXL/
 browser_profile/
 CLAUDE.md
+
+# PyInstaller build output (ai_launcher.spec) — built by CI, never committed
+dist/
+build/
+*.zip

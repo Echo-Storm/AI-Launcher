@@ -5,12 +5,19 @@ import os
 import sys
 
 
-def _setup_logging() -> logging.Logger:
+def _app_dir() -> str:
+    """The app's own directory — next to the real .exe when frozen (PyInstaller),
+    next to this source file otherwise. Frozen __file__ resolves inside the
+    bundle (a fresh temp dir every launch in --onefile mode), not next to the
+    exe, so anything meant to persist next to the app (config.json, prefs,
+    logs) must key off sys.executable instead when frozen."""
     if getattr(sys, 'frozen', False):
-        log_dir = os.path.dirname(sys.executable)
-    else:
-        log_dir = os.path.dirname(os.path.abspath(__file__))
-    log_path = os.path.join(log_dir, "AI_Launcher_Log.txt")
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _setup_logging() -> logging.Logger:
+    log_path = os.path.join(_app_dir(), "AI_Launcher_Log.txt")
 
     fmt    = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     logger = logging.getLogger()
@@ -43,7 +50,7 @@ def _install_excepthook(logger: logging.Logger):
 
 def _check_config() -> bool:
     """Return True if config.json is present. Show a dialog and return False if not."""
-    here        = os.path.dirname(os.path.abspath(__file__))
+    here        = _app_dir()
     config_path = os.path.join(here, "config.json")
     example_path = os.path.join(here, "config.example.json")
 

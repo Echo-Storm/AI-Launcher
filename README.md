@@ -6,7 +6,7 @@
 
 A dark-themed Windows desktop app for running local AI writing sessions. Manages **KoboldCpp** and **SillyTavern** as background services, switches seamlessly between local GGUF inference and remote API backends, includes a full **SillyTavern character card generator** with portrait embedding and personality expansion, and an in-process **SDXL image generator** that SillyTavern can generate through directly.
 
-![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.9.2-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.9.3-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 > If this saves you time: [☕ Ko-fi](https://ko-fi.com/xechostormx)
 >
@@ -238,7 +238,51 @@ You can skip KoboldCpp and SillyTavern entirely if you just want the character c
 
 ---
 
+## Suggested Models
+
+Not required — any GGUF chat model works with KoboldCpp, and any OpenAI-compatible
+model works with the API backend. These are just a reasonable starting point per
+VRAM tier, all Q4_K_M quantization unless noted.
+
+**Writing / roleplay models** — [TheDrummer](https://huggingface.co/TheDrummer) makes
+several of the better creative-writing-tuned finetunes currently available, sized
+across most consumer VRAM tiers:
+
+| VRAM      | Model | Notes |
+|-----------|-------|-------|
+| 8–12 GB   | [Rocinante-X-12B](https://huggingface.co/TheDrummer/Rocinante-X-12B-v1) | Fast, capable for its size — good default for smaller cards |
+| 16 GB     | [Cydonia-24B](https://huggingface.co/TheDrummer/Cydonia-24B-v4.3) | This app's own defaults were tuned against this model — well-rounded prose and character consistency |
+| 24 GB+    | [Skyfall-31B](https://huggingface.co/TheDrummer/Skyfall-31B-v4.2) | Noticeably stronger than the 24B tier if you have the headroom |
+| 24 GB+    | [Anubis-70B](https://huggingface.co/TheDrummer/Anubis-70B-v1.2) | Needs partial CPU offload on most consumer cards — slower, but the highest ceiling in this table |
+
+**Character card generator models** — used by CharGen instead of your writing model
+when you have VRAM to run both, or as your only model if you're only using CharGen:
+
+| VRAM     | Model | Notes |
+|----------|-------|-------|
+| Any (4B) | [CharGen-v3-mini](https://huggingface.co/CharGen/CharGen-v3-mini) | Tiny and fast, purpose-trained on the SillyTavern card format — worse prose quality than the 24B version below, but loads in seconds and leaves VRAM free for your writing model to run alongside it |
+| 16 GB+   | [CharGen-v3-beta-rl-83-s0](https://huggingface.co/CharGen/CharGen-v3-beta-rl-83-s0-GGUF) | Same 24B-class quality tier as Cydonia — best card output this app has been tested with, but can't run alongside a second 24B model on a single 16GB card |
+
+If you only have one GPU-worth of VRAM and want both a writing model and a dedicated
+CharGen model, add both to `config.json`'s `models` list (see
+[Configuration reference](#configuration-reference)) and switch between them from the
+KoboldCpp card's model dropdown — swapping models means a Stop/Start cycle, not a
+second process.
+
+---
+
 ## Installation
+
+### Option A — Prebuilt (no Python required)
+
+Grab the latest zip from [Releases](https://github.com/Echo-Storm/AI-Launcher/releases) —
+`AI_Launcher-cuda-<version>.zip` if you have an NVIDIA GPU and want Image Gen at real
+speed, `AI_Launcher-cpu-<version>.zip` otherwise (Image Gen still runs, just very
+slowly, without CUDA). Extract anywhere, copy `config.example.json` to `config.json`
+and fill in your paths (or launch once and use the Settings GUI — it prompts you if
+`config.json` is missing), then run `AI_Launcher.exe`. No Python install needed.
+
+### Option B — From source
 
 Quick version, if you already have Python 3.13+ and know what you're doing:
 
