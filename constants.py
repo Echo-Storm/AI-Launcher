@@ -2,10 +2,11 @@
 
 import json
 import os
+import shlex
 import sys
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.9.3"
+APP_VERSION  = "1.10.0"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------
@@ -55,6 +56,7 @@ _st  = _dict_section("sillytavern")
 _cg  = _dict_section("chargen")
 _api = _dict_section("api")
 _sdxl = _dict_section("sdxl")
+_forge = _dict_section("forge")
 
 # ---------------------------------------------------------------------------
 # Models list — first entry is the startup default
@@ -95,6 +97,15 @@ def build_kobold_args(model_path: str) -> list[str]:
         args.append("--usevulkan")
     if _kob.get("flash_attention", True):
         args.append("--flashattention")
+    quant_kv = int(_kob.get("quant_kv", 0))
+    if quant_kv:
+        # 1 = Q8_0 (roughly halves KV cache VRAM, generally safe), 2 = Q4_0
+        # (roughly quarters it, but degradation concentrates in long-context
+        # recall specifically -- the one thing this app's whole context-size
+        # tuning exists to protect). 0 (default, omitted entirely) = f16,
+        # today's existing behavior -- unset config.json keeps working
+        # identically to before this option existed.
+        args += ["--quantkv", str(quant_kv)]
     if _kob.get("quiet", True):
         args.append("--quiet")
     if EMBEDDINGS_MODEL and os.path.isfile(EMBEDDINGS_MODEL):
@@ -118,6 +129,45 @@ SILLYTAVERN_READY_STRINGS = ["sillytavern is listening", "listening on"]
 # own -profile dir, see ui.py's _open_st(). Empty/missing path falls back
 # to webbrowser.open().
 SILLYTAVERN_BROWSER_PATH = _st.get("browser_path", "")
+
+# ---------------------------------------------------------------------------
+# Forge Neo (external process — full-featured SD/Krea2/etc. model playground,
+# managed the same way as SillyTavern: a directory + a launch script, not a
+# single exe like KoboldCpp. Kept separate from the in-process SDXL backend
+# below, which stays the fast/curated path for card portraits -- Forge Neo
+# is for pushing whatever state-of-the-art model the in-process pipeline
+# doesn't support (e.g. Krea 2's DiT architecture).
+# ---------------------------------------------------------------------------
+
+FORGE_DIR    = _forge.get("dir", "")
+# Default 7861, not 7860 -- sdxl.port below already defaults to 7860 for the
+# in-process Image Gen API server; colliding defaults would make both
+# services fight over the same port the moment someone enables Forge Neo.
+FORGE_PORT   = int(_forge.get("port", 7861))
+FORGE_ARGS   = _forge.get("args", "")
+FORGE_URL    = f"http://127.0.0.1:{FORGE_PORT}"
+# venv's own python.exe, not webui.bat/webui-user.bat -- QProcess launches it
+# directly (matching SillyTavern's node.exe + server.js pattern) rather than
+# through Forge's batch-file wrappers, which sidesteps a real bug hit while
+# bootstrapping this install: cmd.exe's bare-name `call` resolution failed to
+# find sibling .bat files even with a correct, verified working directory,
+# while a fully-qualified path always worked. Irrelevant here since QProcess
+# never goes through cmd.exe or relies on that resolution at all.
+FORGE_PYTHON = os.path.join(FORGE_DIR, "venv", "Scripts", "python.exe") if FORGE_DIR else ""
+FORGE_READY_STRINGS = ["running on local url"]
+
+
+def build_forge_args() -> list[str]:
+    args = [os.path.join(FORGE_DIR, "launch.py"), "--port", str(FORGE_PORT)]
+    if FORGE_ARGS.strip():
+        try:
+            args += shlex.split(FORGE_ARGS)
+        except ValueError:
+            # Malformed quoting in the user-typed args field -- ignore rather
+            # than crash the launch; Forge just starts with its own defaults.
+            pass
+    return args
+
 
 # ---------------------------------------------------------------------------
 # SDXL (in-process diffusers backend — txt2img + LoRA + TI + ESRGAN hires-fix)
@@ -209,6 +259,7 @@ COLOR_LOG_KOBOLD      = "#7c6fcd"
 COLOR_LOG_ST          = "#5ba0c8"
 COLOR_LOG_IMAGEGEN    = "#c77dd4"
 COLOR_LOG_API         = "#4a9edd"
+COLOR_LOG_FORGE       = "#e0a030"
 
 FONT_UI_FAMILY  = "Segoe UI"
 FONT_UI_SIZE    = 9
