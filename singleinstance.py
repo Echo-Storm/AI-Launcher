@@ -43,6 +43,22 @@ def acquire(name: str) -> bool:
     return True
 
 
+def release():
+    """Explicitly closes this process's mutex handle, if held. Not needed
+    for a normal quit (the OS reclaims the handle automatically at process
+    exit, which is the whole reason the module-level handle was originally
+    designed to just live until interpreter shutdown). It IS needed for
+    Restart App (ui.py's _restart_app()): that spawns a brand-new instance
+    *before* this process has finished tearing down its Qt event loop and
+    actually exiting, and a fresh instance's own acquire() would otherwise
+    race against -- and likely lose to -- this comparatively slow shutdown,
+    surfacing a spurious "already running" rejection on every restart."""
+    global _mutex_handle
+    if _mutex_handle:
+        _kernel32.CloseHandle(_mutex_handle)
+        _mutex_handle = None
+
+
 def focus_existing_window(title: str):
     """Best-effort: bring the already-running instance's window to the
     front instead of leaving the user to hunt for it. Silently does

@@ -41,3 +41,26 @@ def test_mutex_releases_when_holding_process_exits():
     name = "AILauncherTest_ReleaseOnExit"
     assert "ACQUIRED" in _acquire_in_subprocess(name)
     assert "ACQUIRED" in _acquire_in_subprocess(name)
+
+
+def test_release_allows_reacquire_in_same_process():
+    name = "AILauncherTest_ReleaseThenReacquire"
+    assert singleinstance.acquire(name) is True
+    singleinstance.release()
+    assert singleinstance.acquire(name) is True
+
+
+def test_release_unblocks_a_concurrently_running_second_process():
+    """The actual bug release() exists to fix: ui.py's _restart_app() spawns
+    a fresh instance BEFORE this process has finished tearing down its Qt
+    event loop and actually exiting, so a naive fix would still have this
+    process alive (not exited) when the new one starts. Without an explicit
+    release, the new process's own acquire() would race the OS reclaiming
+    the handle at this process's eventual exit and could easily lose,
+    surfacing a spurious "already running" rejection. release() must free
+    the name up for a concurrent second process immediately -- proven here
+    by never exiting this process at all before the subprocess acquires."""
+    name = "AILauncherTest_ReleaseUnblocksLiveSecondProcess"
+    assert singleinstance.acquire(name) is True
+    singleinstance.release()
+    assert "ACQUIRED" in _acquire_in_subprocess(name)

@@ -1607,10 +1607,21 @@ class MainWindow(QMainWindow):
         _shutdown_services() has already fully run -- if it were started
         first and the user then declined the busy-confirmation, or if the
         spawn itself failed, this window's own closeEvent could still cancel
-        the exit, leaving two instances fighting over the same ports."""
+        the exit, leaving two instances fighting over the same ports.
+
+        Also explicitly releases the single-instance mutex (singleinstance.py)
+        before spawning -- that mutex is normally only reclaimed by the OS
+        when this process actually exits, which happens well after this
+        point (Qt event loop teardown, app.exec() returning, interpreter
+        shutdown). Without releasing it here first, the new instance's own
+        startup mutex-acquire would race against -- and likely lose to --
+        this process's slower shutdown, surfacing a spurious "already
+        running" rejection instead of actually restarting."""
         if not self._confirm_close_if_busy():
             return
         self._shutdown_services()
+        import singleinstance
+        singleinstance.release()
         if getattr(sys, 'frozen', False):
             program, args = sys.executable, sys.argv[1:]
         else:
