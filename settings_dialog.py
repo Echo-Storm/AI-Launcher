@@ -430,6 +430,114 @@ class _SettingsApiTestWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Forge Neo update worker -- a single combined check+update: fetches, reads
+# the CURRENT and remote-AVAILABLE version from modules_forge/forge_version.py
+# (Forge Neo's own `Version: neo 2.27` startup line comes from that file's
+# plain `version`/`release` strings -- not a git tag), and only then pulls if
+# they actually differ. Checking the remote version before pulling (rather
+# than just running `git pull` and inspecting what changed after) means a
+# rejected fast-forward can still be reported as "update available, X -> Y"
+# instead of just a bare error with no version context.
+#
+# Relies on the repo's own configured upstream (`@{u}`) rather than
+# hardcoding a remote/branch name, so this keeps working regardless of
+# exactly how a given Forge Neo checkout was set up.
+# ---------------------------------------------------------------------------
+
+_FORGE_VERSION_REL_PATH = os.path.join("modules_forge", "forge_version.py")
+# Matches Forge Neo's own `git_tag()` formula (launch_utils.py) exactly --
+# f"{forge_version.version} {forge_version.release}" -- so what this shows
+# ("neo 2.27") is the same string already familiar from its startup log line
+# ("Version: neo 2.27"), not just the bare release number.
+_FORGE_VERSION_FIELD_RE = re.compile(r'version\s*=\s*["\'](.*?)["\']')
+_FORGE_RELEASE_FIELD_RE = re.compile(r'release\s*=\s*["\'](.*?)["\']')
+
+
+def _parse_forge_version(text: str) -> str:
+    v = _FORGE_VERSION_FIELD_RE.search(text)
+    r = _FORGE_RELEASE_FIELD_RE.search(text)
+    return f"{v.group(1) if v else '?'} {r.group(1) if r else '?'}"
+
+
+def _read_forge_version(forge_dir: str) -> str:
+    try:
+        with open(os.path.join(forge_dir, _FORGE_VERSION_REL_PATH), encoding="utf-8") as f:
+            return _parse_forge_version(f.read())
+    except OSError:
+        return "unknown"
+
+
+class _ForgeUpdateWorker(QThread):
+    result = pyqtSignal(bool, str)   # (success, message)
+
+    def __init__(self, forge_dir: str, parent=None):
+        super().__init__(parent)
+        self._dir = forge_dir
+
+    def _git(self, *args):
+        import subprocess
+        return subprocess.run(
+            ["git", "-C", self._dir, *args],
+            capture_output=True, text=True, timeout=60,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+    @staticmethod
+    def _tail(output: str, n: int = 6) -> str:
+        # A merge-conflict/local-changes error can be long; the tail is
+        # what's actually actionable.
+        return "\n".join(output.strip().splitlines()[-n:])
+
+    def run(self):
+        import subprocess
+
+        if not self._dir or not os.path.isdir(self._dir):
+            self.result.emit(False, "Forge Neo directory not set — save it first.")
+            return
+        if not os.path.isdir(os.path.join(self._dir, ".git")):
+            self.result.emit(False, "Not a git checkout — can't check for updates here.")
+            return
+
+        current = _read_forge_version(self._dir)
+
+        try:
+            fetch = self._git("fetch")
+        except FileNotFoundError:
+            self.result.emit(False, f"Current: {current} — git.exe not found on PATH.")
+            return
+        except subprocess.TimeoutExpired:
+            self.result.emit(False, f"Current: {current} — timed out contacting the remote.")
+            return
+        if fetch.returncode != 0:
+            self.result.emit(False, f"Current: {current} — fetch failed:\n{self._tail(fetch.stdout + fetch.stderr)}")
+            return
+
+        upstream = self._git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        if upstream.returncode != 0:
+            self.result.emit(False, f"Current: {current} — no upstream branch configured for this checkout.")
+            return
+        upstream_ref = upstream.stdout.strip()
+
+        show = self._git("show", f"{upstream_ref}:{_FORGE_VERSION_REL_PATH.replace(os.sep, '/')}")
+        available = _parse_forge_version(show.stdout) if show.returncode == 0 else "unknown"
+
+        if current == available:
+            self.result.emit(True, f"Up to date — {current}")
+            return
+
+        pull = self._git("pull", "--ff-only")
+        if pull.returncode == 0:
+            new_current = _read_forge_version(self._dir)
+            self.result.emit(True, f"Updated {current} → {new_current} (Stop then Start Forge Neo to pick it up)")
+        else:
+            self.result.emit(
+                False,
+                f"Update available ({current} → {available}) but couldn't apply automatically:\n"
+                f"{self._tail(pull.stdout + pull.stderr)}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Settings dialog
 # ---------------------------------------------------------------------------
 
@@ -443,6 +551,7 @@ class SettingsDialog(QDialog):
 
         self._cfg    = {}
         self._worker = None
+        self._forge_update_worker = None
         self._config_load_failed = False
 
         self._load_config()
@@ -502,6 +611,7 @@ class SettingsDialog(QDialog):
         self._tabs.addTab(self._tab_api(),       "  API  ")
         self._tabs.addTab(self._tab_models(),    "  Models  ")
         self._tabs.addTab(self._tab_imagegen(),  "  Image Gen  ")
+        self._tabs.addTab(self._tab_forge(),     "  Forge Neo  ")
         self._tabs.addTab(self._tab_app(),       "  App  ")
 
         # Footer
@@ -612,6 +722,23 @@ class SettingsDialog(QDialog):
         )
 
         row += 1
+        g.addWidget(_lbl("Quantized KV Cache"), row, 0)
+        self._kob_quant_kv = QComboBox()
+        self._kob_quant_kv.addItem("Off  (f16, full precision)", userData=0)
+        self._kob_quant_kv.addItem("Q8_0  (~half KV cache VRAM, generally safe)", userData=1)
+        self._kob_quant_kv.addItem("Q4_0  (~quarter KV cache VRAM, riskier for long-context recall)", userData=2)
+        g.addWidget(self._kob_quant_kv, row, 1, 1, 2)
+
+        row += 1
+        note_kv = _lbl(
+            "Shrinks context/KV cache VRAM usage without touching model weights. Q8_0 is "
+            "usually safe; Q4_0 trades more VRAM for a real risk of worse long-context recall "
+            "-- test carefully if story continuity matters to you."
+        )
+        note_kv.setWordWrap(True)
+        g.addWidget(note_kv, row, 0, 1, 3)
+
+        row += 1
         g.addWidget(_divider(), row, 0, 1, 3)
 
         row += 1
@@ -672,6 +799,61 @@ class SettingsDialog(QDialog):
         g.addWidget(btn_browser, 2, 2)
 
         g.setRowStretch(3, 1)
+        return w
+
+    # ── Forge Neo tab ─────────────────────────────────────────────────
+
+    def _tab_forge(self) -> QWidget:
+        w = QWidget()
+        g = QGridLayout(w)
+        g.setContentsMargins(16, 14, 16, 14)
+        g.setVerticalSpacing(8)
+        g.setHorizontalSpacing(10)
+        g.setColumnStretch(1, 1)
+
+        note = QLabel(
+            "External process — a full-featured model playground (Krea 2, etc.), separate "
+            "from the in-process Image Gen backend above. Point this at a Forge Neo checkout "
+            "that has already been run once via webui-user.bat, so its venv exists."
+        )
+        note.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        note.setWordWrap(True)
+        g.addWidget(note, 0, 0, 1, 3)
+
+        g.addWidget(_lbl("Forge Neo directory"), 1, 0)
+        self._forge_dir = QLineEdit()
+        g.addWidget(self._forge_dir, 1, 1)
+        btn = QPushButton("Browse…")
+        btn.setFixedWidth(72)
+        btn.clicked.connect(lambda: self._browse_dir(self._forge_dir))
+        g.addWidget(btn, 1, 2)
+
+        g.addWidget(_lbl("Port"), 2, 0)
+        self._forge_port = QSpinBox()
+        self._forge_port.setRange(1024, 65535)
+        self._forge_port.setFixedWidth(100)
+        g.addWidget(self._forge_port, 2, 1, Qt.AlignmentFlag.AlignLeft)
+
+        g.addWidget(_lbl("Launch args"), 3, 0)
+        self._forge_args = QLineEdit()
+        self._forge_args.setPlaceholderText("--xformers --cuda-malloc")
+        g.addWidget(self._forge_args, 3, 1, 1, 2)
+
+        g.addWidget(_divider(), 4, 0, 1, 3)
+
+        update_row = QHBoxLayout()
+        update_row.setSpacing(10)
+        self._btn_forge_update = QPushButton("Check for Updates")
+        self._btn_forge_update.setFixedWidth(140)
+        self._btn_forge_update.clicked.connect(self._check_update_forge)
+        update_row.addWidget(self._btn_forge_update)
+        self._lbl_forge_update = QLabel("—")
+        self._lbl_forge_update.setWordWrap(True)
+        self._lbl_forge_update.setStyleSheet(f"color: {COLOR_TEXT_MUTED}; font-size: 8pt;")
+        update_row.addWidget(self._lbl_forge_update, 1)
+        g.addLayout(update_row, 5, 0, 1, 3)
+
+        g.setRowStretch(6, 1)
         return w
 
     # ── API tab ───────────────────────────────────────────────────────
@@ -1064,6 +1246,8 @@ class SettingsDialog(QDialog):
         self._kob_cuda.setChecked(bool(kob.get("use_cuda", True)))
         self._kob_vulkan.setChecked(bool(kob.get("use_vulkan", False)))
         self._kob_flash.setChecked(bool(kob.get("flash_attention", True)))
+        idx = self._kob_quant_kv.findData(int(kob.get("quant_kv", 0)))
+        self._kob_quant_kv.setCurrentIndex(max(idx, 0))
         self._kob_quiet.setChecked(bool(kob.get("quiet", True)))
         self._kob_embed.setText(kob.get("embeddings_model", ""))
 
@@ -1071,6 +1255,11 @@ class SettingsDialog(QDialog):
         self._st_dir.setText(st.get("dir", ""))
         self._st_port.setValue(int(st.get("port", 8000)))
         self._st_browser.setText(st.get("browser_path", ""))
+
+        forge = self._cfg.get("forge", {})
+        self._forge_dir.setText(forge.get("dir", ""))
+        self._forge_port.setValue(int(forge.get("port", 7861)))
+        self._forge_args.setText(forge.get("args", ""))
 
         api = self._cfg.get("api", {})
         self._api_url.setText(api.get("base_url", ""))
@@ -1116,6 +1305,7 @@ class SettingsDialog(QDialog):
         kob["use_cuda"]       = self._kob_cuda.isChecked()
         kob["use_vulkan"]     = self._kob_vulkan.isChecked()
         kob["flash_attention"]= self._kob_flash.isChecked()
+        kob["quant_kv"]        = self._kob_quant_kv.currentData()
         kob["quiet"]          = self._kob_quiet.isChecked()
         kob["embeddings_model"] = self._kob_embed.text().strip()
 
@@ -1123,6 +1313,11 @@ class SettingsDialog(QDialog):
         st["dir"]  = self._st_dir.text().strip()
         st["port"] = self._st_port.value()
         st["browser_path"] = self._st_browser.text().strip()
+
+        forge = self._cfg.setdefault("forge", {})
+        forge["dir"]  = self._forge_dir.text().strip()
+        forge["port"] = self._forge_port.value()
+        forge["args"] = self._forge_args.text().strip()
 
         api = self._cfg.setdefault("api", {})
         api["base_url"] = self._api_url.text().strip().rstrip("/")
@@ -1332,6 +1527,32 @@ class SettingsDialog(QDialog):
         self._lbl_api_status.setText(msg)
         self._lbl_api_status.setStyleSheet(f"color: {color}; font-size: 8pt;")
 
+    # -- Forge Neo update ------------------------------------------------
+
+    def _check_update_forge(self):
+        # Live field value, not saved config -- same rationale as _test_api:
+        # check against whatever's currently typed, even if not yet saved.
+        forge_dir = self._forge_dir.text().strip()
+        if self._forge_update_worker and self._forge_update_worker.isRunning():
+            return
+        self._btn_forge_update.setEnabled(False)
+        self._lbl_forge_update.setText("Checking…")
+        self._lbl_forge_update.setStyleSheet(f"color: {COLOR_STATUS_STARTING}; font-size: 8pt;")
+        w = _ForgeUpdateWorker(forge_dir, self)
+        w.result.connect(self._on_forge_update_result)
+        w.finished.connect(self._on_forge_update_finished)
+        self._forge_update_worker = w
+        w.start()
+
+    def _on_forge_update_finished(self):
+        self._btn_forge_update.setEnabled(True)
+        self._forge_update_worker = None
+
+    def _on_forge_update_result(self, ok: bool, msg: str):
+        color = COLOR_STATUS_RUNNING if ok else COLOR_STATUS_ERROR
+        self._lbl_forge_update.setText(msg)
+        self._lbl_forge_update.setStyleSheet(f"color: {color}; font-size: 8pt;")
+
     # -- Model table helpers -------------------------------------------
 
     def _model_table_add_row(self, name: str = "", key: str = "", path: str = ""):
@@ -1415,4 +1636,7 @@ class SettingsDialog(QDialog):
         if self._worker and self._worker.isRunning():
             self._worker.terminate()
             self._worker.wait(2000)
+        if self._forge_update_worker and self._forge_update_worker.isRunning():
+            self._forge_update_worker.terminate()
+            self._forge_update_worker.wait(2000)
         event.accept()

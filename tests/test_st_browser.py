@@ -56,7 +56,7 @@ def test_launches_configured_browser_with_dedicated_profile_and_no_remote(qapp, 
     def fake_start_detached(path, args):
         captured["path"] = path
         captured["args"] = args
-        return True
+        return True, 12345  # real QProcess.startDetached returns (bool, pid), not a bare bool
     monkeypatch.setattr(QProcess, "startDetached", staticmethod(fake_start_detached))
 
     opened_default = []
@@ -78,7 +78,8 @@ def test_falls_back_when_configured_browser_fails_to_launch(qapp, monkeypatch, t
     fake_browser = tmp_path / "fakebrowser.exe"
     fake_browser.write_text("not a real exe")
     monkeypatch.setattr(ui, "SILLYTAVERN_BROWSER_PATH", str(fake_browser))
-    monkeypatch.setattr(QProcess, "startDetached", staticmethod(lambda *a, **k: False))
+    # real QProcess.startDetached returns (bool, pid), not a bare bool
+    monkeypatch.setattr(QProcess, "startDetached", staticmethod(lambda *a, **k: (False, -1)))
 
     calls = []
     monkeypatch.setattr(ui.webbrowser, "open", lambda url: calls.append(url))

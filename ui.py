@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 import webbrowser
 
@@ -424,14 +425,19 @@ class MainWindow(QMainWindow):
 
         self._kobold_proc       = None
         self._st_proc           = None
+        self._forge_proc        = None
         self._kobold_job        = None
         self._st_job            = None
+        self._forge_job         = None
         self._kobold_ready      = False
         self._st_ready          = False
+        self._forge_ready       = False
         self._kobold_ready_buf  = ""
         self._st_ready_buf      = ""
+        self._forge_ready_buf   = ""
         self._kobold_stopping   = False
         self._st_stopping       = False
+        self._forge_stopping    = False
         self._current_model_key = None
         self._chargen_dlg       = None
         self._imagegen_local_dlg = None
@@ -666,14 +672,64 @@ class MainWindow(QMainWindow):
 
         tools_vbox.addWidget(lig_row)
 
-        # Kill All footer
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setFixedHeight(1)
+        sep3.setStyleSheet(f"background: {COLOR_BORDER}; border: none;")
+        tools_vbox.addWidget(sep3)
+
+        # Forge Neo tool row -- external process (directory + launch script,
+        # same shape as SillyTavern), not the in-process SDXL backend above.
+        # Separate use case: a full-featured playground for whatever
+        # state-of-the-art model the curated in-process pipeline doesn't
+        # support (e.g. Krea 2), not a replacement for it.
+        forge_row = QWidget()
+        forge_row.setStyleSheet("background: transparent;")
+        forge_layout = QHBoxLayout(forge_row)
+        forge_layout.setContentsMargins(14, 9, 14, 9)
+        forge_layout.setSpacing(8)
+
+        forge_title = QLabel("Forge Neo")
+        forge_title.setFont(QFont(FONT_UI_FAMILY, 9, QFont.Weight.Bold))
+        forge_title.setStyleSheet(f"color: {COLOR_TEXT};")
+        forge_title.setFixedWidth(140)
+        forge_layout.addWidget(forge_title)
+
+        self.forge_status = StatusBadge()
+        forge_layout.addWidget(self.forge_status)
+
+        self.forge_via_lbl = QLabel("full model playground (Krea2, etc.)")
+        self.forge_via_lbl.setFont(QFont(FONT_UI_FAMILY, 8))
+        self.forge_via_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        forge_layout.addWidget(self.forge_via_lbl, 1)
+
+        self.btn_forge_start = QPushButton("Start")
+        self.btn_forge_stop  = QPushButton("Stop")
+        self.btn_forge_open  = QPushButton("Open")
+        self.btn_forge_stop.setEnabled(False)
+        self.btn_forge_open.setEnabled(False)
+        for b in (self.btn_forge_start, self.btn_forge_stop, self.btn_forge_open):
+            b.setFixedHeight(26)
+            b.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
+        forge_layout.addWidget(self.btn_forge_start)
+        forge_layout.addWidget(self.btn_forge_stop)
+        forge_layout.addWidget(self.btn_forge_open)
+
+        tools_vbox.addWidget(forge_row)
+
+        # Kill All / Restart App footer
         kill_row = QHBoxLayout()
         kill_row.setContentsMargins(14, 6, 14, 8)
+        kill_row.setSpacing(6)
+        self.btn_restart_app = QPushButton("Restart App")
+        self.btn_restart_app.setFixedHeight(24)
+        self.btn_restart_app.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
         self.btn_kill_all = QPushButton("Kill All")
         self.btn_kill_all.setObjectName("danger")
         self.btn_kill_all.setFixedHeight(24)
         self.btn_kill_all.setFont(QFont(FONT_UI_FAMILY, FONT_UI_SIZE))
         kill_row.addStretch()
+        kill_row.addWidget(self.btn_restart_app)
         kill_row.addWidget(self.btn_kill_all)
         tools_vbox.addLayout(kill_row)
 
@@ -733,7 +789,11 @@ class MainWindow(QMainWindow):
         self.btn_imagegen_local_start.clicked.connect(self._start_imagegen_local)
         self.btn_imagegen_local_stop.clicked.connect(self._stop_imagegen_local)
         self.btn_imagegen_local_open.clicked.connect(self._open_imagegen_local)
+        self.btn_forge_start.clicked.connect(self._start_forge)
+        self.btn_forge_stop.clicked.connect(self._stop_forge)
+        self.btn_forge_open.clicked.connect(self._open_forge)
         self.btn_kill_all.clicked.connect(self._kill_all)
+        self.btn_restart_app.clicked.connect(self._restart_app)
         self.api_card.btn_activate.clicked.connect(self._activate_api)
         self.api_card.model_changed.connect(self._on_api_model_changed)
 
@@ -794,6 +854,9 @@ class MainWindow(QMainWindow):
 
     def _log_imagegen(self, text: str, color: str = COLOR_LOG_IMAGEGEN):
         self._log(f"[ImageGen] {text}", color)
+
+    def _log_forge(self, text: str):
+        self._log(f"[Forge Neo] {text}", COLOR_LOG_FORGE)
 
     def _copy_log(self):
         QApplication.clipboard().setText(self.log.toPlainText())
@@ -1252,6 +1315,118 @@ class MainWindow(QMainWindow):
         self._log_imagegen("Unloaded.")
 
     # ------------------------------------------------------------------
+    # Forge Neo process (external — full model playground, not the
+    # in-process SDXL backend above)
+    # ------------------------------------------------------------------
+
+    def _start_forge(self):
+        if self._forge_proc and self._forge_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+
+        if not FORGE_DIR or not os.path.isdir(FORGE_DIR):
+            self._log("[Forge Neo] ERROR: Directory not found — check Settings.", COLOR_STATUS_ERROR)
+            self.forge_status.set_error()
+            return
+
+        if not os.path.isfile(FORGE_PYTHON):
+            self._log_forge(
+                f"ERROR: venv Python not found — has Forge Neo been run once "
+                f"(via webui-user.bat) to create its venv?\n  {FORGE_PYTHON}"
+            )
+            self.forge_status.set_error()
+            return
+
+        self._forge_ready = False
+        self._forge_ready_buf = ""
+        self.forge_status.set_starting()
+        self.btn_forge_start.setEnabled(False)
+        self.btn_forge_stop.setEnabled(True)
+        self.btn_forge_open.setEnabled(False)
+        self._log_forge("Starting… (first run after install can take several minutes)")
+
+        proc = QProcess(self)
+        proc.setProgram(FORGE_PYTHON)
+        proc.setArguments(build_forge_args())
+        proc.setWorkingDirectory(FORGE_DIR)
+        proc.readyReadStandardOutput.connect(self._on_forge_stdout)
+        proc.readyReadStandardError.connect(self._on_forge_stderr)
+        proc.finished.connect(self._on_forge_finished)
+        proc.errorOccurred.connect(self._on_forge_error)
+        proc.start()
+        self._forge_proc = proc
+        self._forge_job = JobObject()
+        proc.started.connect(
+            lambda: self._assign_job_or_warn(self._forge_job, proc, self._log_forge)
+        )
+
+    def _stop_forge(self, wait: bool = False):
+        if self._forge_proc and self._forge_proc.state() != QProcess.ProcessState.NotRunning:
+            self._forge_stopping = True
+            pid = self._forge_proc.processId()
+            if self._forge_job:
+                self._forge_job.terminate()
+            if pid:
+                self._tree_kill(pid, wait=wait)
+            self._forge_proc.kill()
+        self._forge_ready = False
+        self.btn_forge_stop.setEnabled(False)
+        self.btn_forge_open.setEnabled(False)
+
+    def _on_forge_stdout(self):
+        if not self._forge_proc:
+            return
+        data = self._forge_proc.readAllStandardOutput().data().decode("utf-8", errors="replace")
+        self._log_forge(data)
+        self._check_forge_ready(data)
+
+    def _on_forge_stderr(self):
+        if not self._forge_proc:
+            return
+        data = self._forge_proc.readAllStandardError().data().decode("utf-8", errors="replace")
+        self._log_forge(data)
+        self._check_forge_ready(data)
+
+    def _check_forge_ready(self, text: str):
+        if self._forge_ready:
+            return
+        self._forge_ready_buf = (self._forge_ready_buf + text.lower())[-512:]
+        if any(s in self._forge_ready_buf for s in FORGE_READY_STRINGS):
+            self._forge_ready = True
+            self.forge_status.set_running()
+            self.btn_forge_open.setEnabled(True)
+            self._log_forge("Ready.")
+            if self._forge_proc:
+                self._assign_job_or_warn(self._forge_job, self._forge_proc, self._log_forge)
+
+    def _on_forge_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self._log_forge("ERROR: Process failed to start (venv Python missing, corrupted, or blocked).")
+            self._on_forge_finished(-1, QProcess.ExitStatus.CrashExit)
+        else:
+            self._log_forge(f"Process error: {error}")
+
+    def _on_forge_finished(self, exit_code: int, exit_status):
+        if not self._forge_stopping and self._forge_job:
+            self._forge_job.terminate()
+        if self._forge_job:
+            self._forge_job.close()
+            self._forge_job = None
+        self._forge_ready = False
+        if self._forge_stopping or exit_code == 0:
+            self.forge_status.set_stopped()
+        else:
+            self.forge_status.set_error()
+        self._forge_stopping = False
+        self.btn_forge_start.setEnabled(True)
+        self.btn_forge_stop.setEnabled(False)
+        self.btn_forge_open.setEnabled(False)
+        self._log_forge(f"Exited (code {exit_code})")
+        self._forge_proc = None
+
+    def _open_forge(self):
+        webbrowser.open(FORGE_URL)
+
+    # ------------------------------------------------------------------
     # Global controls
     # ------------------------------------------------------------------
 
@@ -1259,6 +1434,7 @@ class MainWindow(QMainWindow):
         self._stop_kobold()
         self._stop_st()
         self._stop_imagegen_local()
+        self._stop_forge()
         self._deactivate_api()
 
     def _open_st(self):
@@ -1271,10 +1447,15 @@ class MainWindow(QMainWindow):
         if SILLYTAVERN_BROWSER_PATH:
             if os.path.isfile(SILLYTAVERN_BROWSER_PATH):
                 profile_dir = os.path.join(APP_DIR, "browser_profile")
-                if QProcess.startDetached(
+                # PyQt6's static QProcess.startDetached returns a (bool, pid)
+                # tuple, not a bare bool -- `if QProcess.startDetached(...):`
+                # was always truthy (a non-empty tuple) regardless of
+                # whether the launch actually succeeded.
+                started, _pid = QProcess.startDetached(
                     SILLYTAVERN_BROWSER_PATH,
                     ["-profile", profile_dir, "-no-remote", SILLYTAVERN_URL],
-                ):
+                )
+                if started:
                     return
                 self._log_st(f"WARNING: configured browser failed to launch: {SILLYTAVERN_BROWSER_PATH}")
             else:
@@ -1376,7 +1557,9 @@ class MainWindow(QMainWindow):
                 return c
         return None
 
-    def closeEvent(self, event):
+    def _confirm_close_if_busy(self) -> bool:
+        """Shared by closeEvent and _restart_app -- an in-flight generation
+        shouldn't be silently killed by either path without asking first."""
         if imagegen_engine.is_busy():
             reply = QMessageBox.question(
                 self, "Image Gen is busy",
@@ -1386,9 +1569,17 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
-            if reply != QMessageBox.StandardButton.Yes:
-                event.ignore()
-                return
+            return reply == QMessageBox.StandardButton.Yes
+        return True
+
+    def _shutdown_services(self):
+        """Stops every managed service synchronously (wait=True where that
+        option exists) -- shared by closeEvent and _restart_app so a restart
+        gets the exact same guaranteed cleanup a normal quit does, not a
+        second, looser code path. Safe to call twice in a row (e.g.
+        _restart_app calling it, then closeEvent calling it again via the
+        self.close() that follows) -- every _stop_* already no-ops on an
+        already-stopped service."""
         if self._chargen_dlg is not None:
             self._chargen_dlg.close()
         if self._imagegen_local_dlg is not None:
@@ -1399,9 +1590,59 @@ class MainWindow(QMainWindow):
         self._stop_kobold(wait=True)
         self._stop_st(wait=True)
         self._stop_imagegen_local()
+        self._stop_forge(wait=True)
         # Brief wait to let processes actually exit before the app quits
         if self._kobold_proc:
             self._kobold_proc.waitForFinished(2000)
         if self._st_proc:
             self._st_proc.waitForFinished(2000)
+        if self._forge_proc:
+            self._forge_proc.waitForFinished(2000)
+
+    def _restart_app(self):
+        """Kill-all-and-relaunch: stops every managed service (with the same
+        busy-confirmation and synchronous cleanup as a normal quit), spawns a
+        fresh instance of this same app, then closes this one. The new
+        instance is started BEFORE closing this one, but only after
+        _shutdown_services() has already fully run -- if it were started
+        first and the user then declined the busy-confirmation, or if the
+        spawn itself failed, this window's own closeEvent could still cancel
+        the exit, leaving two instances fighting over the same ports.
+
+        Also explicitly releases the single-instance mutex (singleinstance.py)
+        before spawning -- that mutex is normally only reclaimed by the OS
+        when this process actually exits, which happens well after this
+        point (Qt event loop teardown, app.exec() returning, interpreter
+        shutdown). Without releasing it here first, the new instance's own
+        startup mutex-acquire would race against -- and likely lose to --
+        this process's slower shutdown, surfacing a spurious "already
+        running" rejection instead of actually restarting."""
+        if not self._confirm_close_if_busy():
+            return
+        self._shutdown_services()
+        import singleinstance
+        singleinstance.release()
+        if getattr(sys, 'frozen', False):
+            program, args = sys.executable, sys.argv[1:]
+        else:
+            program, args = sys.executable, sys.argv
+        # PyQt6's static QProcess.startDetached returns a (bool, pid) tuple,
+        # not a bare bool -- a plain `if QProcess.startDetached(...)` would
+        # always be truthy (a non-empty tuple), even on failure.
+        started, _pid = QProcess.startDetached(program, args, APP_DIR)
+        if not started:
+            self._log(
+                "ERROR: Could not launch a new instance -- restart aborted after "
+                "stopping services. Please relaunch manually.", COLOR_STATUS_ERROR
+            )
+            return
+        # Services are already stopped, so the closeEvent this triggers will
+        # pass its own busy-check/shutdown trivially and just accept.
+        self.close()
+
+    def closeEvent(self, event):
+        if not self._confirm_close_if_busy():
+            event.ignore()
+            return
+        self._shutdown_services()
         event.accept()
