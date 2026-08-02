@@ -6,7 +6,7 @@
 
 A dark-themed Windows desktop app for running local AI writing sessions. Manages **KoboldCpp**, **SillyTavern**, and **Forge Neo** as background services, switches seamlessly between local GGUF inference and remote API backends, includes a full **SillyTavern character card generator** with portrait embedding and personality expansion, an in-process **SDXL image generator** that SillyTavern can generate through directly, and managed **Forge Neo** integration for pushing state-of-the-art image models (Krea 2, etc.) that the curated in-process pipeline doesn't cover.
 
-![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.10.0-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.13+-blue) ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green) ![Version](https://img.shields.io/badge/version-1.10.1-violet) ![License](https://img.shields.io/badge/license-MIT-purple) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 > If this saves you time: [☕ Ko-fi](https://ko-fi.com/xechostormx)
 >

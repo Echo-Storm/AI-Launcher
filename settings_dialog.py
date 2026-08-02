@@ -685,8 +685,13 @@ class SettingsDialog(QDialog):
         row += 1
         g.addWidget(_lbl("GPU layers"), row, 0)
         self._kob_gpu = QSpinBox()
-        self._kob_gpu.setRange(0, 200)
-        self._kob_gpu.setFixedWidth(80)
+        # -1 = auto-detect (KoboldCpp's own AutoFit) -- min must allow it, or
+        # opening Settings with an auto config and hitting Save silently
+        # clamps -1 up to 0, corrupting "auto" into "zero GPU layers" (worse
+        # than any fixed-number mismatch this was meant to replace).
+        self._kob_gpu.setRange(-1, 200)
+        self._kob_gpu.setSpecialValueText("Auto")
+        self._kob_gpu.setFixedWidth(100)
         g.addWidget(self._kob_gpu, row, 1, Qt.AlignmentFlag.AlignLeft)
 
         row += 1

@@ -6,7 +6,7 @@ import shlex
 import sys
 
 APP_NAME     = "AI Writing Tools"
-APP_VERSION  = "1.10.0"
+APP_VERSION  = "1.10.1"
 LOG_FILENAME = "AI_Launcher_Log.txt"
 
 # ---------------------------------------------------------------------------
