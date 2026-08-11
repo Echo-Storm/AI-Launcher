@@ -518,12 +518,22 @@ class _ForgeUpdateWorker(QThread):
             return
         upstream_ref = upstream.stdout.strip()
 
-        show = self._git("show", f"{upstream_ref}:{_FORGE_VERSION_REL_PATH.replace(os.sep, '/')}")
-        available = _parse_forge_version(show.stdout) if show.returncode == 0 else "unknown"
+        # Compare commit SHAs, not forge_version.py's text -- Forge Neo doesn't
+        # bump that file on every commit (e.g. the upstream "2.28.1" tag only
+        # touched README.md), so a text compare falsely reports "up to date"
+        # whenever real commits landed without a version-file change.
+        local_sha  = self._git("rev-parse", "HEAD")
+        remote_sha = self._git("rev-parse", upstream_ref)
+        if local_sha.returncode != 0 or remote_sha.returncode != 0:
+            self.result.emit(False, f"Current: {current} — couldn't resolve commit SHAs to compare.")
+            return
 
-        if current == available:
+        if local_sha.stdout.strip() == remote_sha.stdout.strip():
             self.result.emit(True, f"Up to date — {current}")
             return
+
+        show = self._git("show", f"{upstream_ref}:{_FORGE_VERSION_REL_PATH.replace(os.sep, '/')}")
+        available = _parse_forge_version(show.stdout) if show.returncode == 0 else "unknown"
 
         pull = self._git("pull", "--ff-only")
         if pull.returncode == 0:
